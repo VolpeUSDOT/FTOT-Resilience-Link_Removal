@@ -18,9 +18,9 @@ dependencies:
   - brotli-bin=1.0.9=h2bbff1b_7
   - brotlipy=0.7.0=py310he2412df_1004
   - bzip2=1.0.8=he774522_0
-  - ca-certificates=2022.9.14=h5b45459_0
+  - ca-certificates=2022.07.19=haa95532_0
   - cairo=1.16.0=h0ac17fb_1012
-  - certifi=2022.9.14=pyhd8ed1ab_0
+  - certifi=2022.9.14=py310haa95532_0
   - cffi=1.15.1=py310h2bbff1b_0
   - cfitsio=4.1.0=h5a969a9_0
   - charset-normalizer=2.1.1=pyhd8ed1ab_0
@@ -66,6 +66,7 @@ dependencies:
   - ipykernel=6.15.2=py310haa95532_0
   - ipython=8.4.0=py310haa95532_0
   - ipython_genutils=0.2.0=pyhd3eb1b0_1
+  - ipywidgets=7.6.5=pyhd3eb1b0_1
   - jedi=0.18.1=py310haa95532_1
   - jinja2=3.0.3=pyhd3eb1b0_0
   - joblib=1.2.0=pyhd8ed1ab_0
@@ -74,6 +75,7 @@ dependencies:
   - jupyter_client=7.3.5=py310haa95532_0
   - jupyter_core=4.10.0=py310haa95532_0
   - jupyterlab_pygments=0.1.2=py_0
+  - jupyterlab_widgets=1.0.0=pyhd3eb1b0_1
   - kealib=1.4.15=hdf81f3a_1
   - kiwisolver=1.4.2=py310hd77b12b_0
   - krb5=1.19.3=h1176d77_0
@@ -113,6 +115,7 @@ dependencies:
   - libxslt=1.1.35=h2bbff1b_0
   - libzip=1.9.2=hfed4ece_1
   - libzlib=1.2.12=hcfcfb64_3
+  - lxml=4.9.1=py310h1985fb9_0
   - lz4-c=1.9.3=h2bbff1b_1
   - m2w64-gcc-libgfortran=5.3.0=6
   - m2w64-gcc-libs=5.3.0=7
@@ -142,7 +145,7 @@ dependencies:
   - notebook=6.4.12=py310haa95532_0
   - numpy-base=1.23.1=py310h206c741_0
   - openjpeg=2.5.0=hc9384bd_1
-  - openssl=1.1.1q=h8ffe710_0
+  - openssl=1.1.1q=h2bbff1b_0
   - packaging=21.3=pyhd3eb1b0_0
   - pandas=1.5.0=py310h1c4a608_0
   - pandocfilters=1.5.0=pyhd3eb1b0_0
@@ -201,7 +204,7 @@ dependencies:
   - tk=8.6.12=h2bbff1b_0
   - toml=0.10.2=pyhd3eb1b0_0
   - tornado=6.2=py310h2bbff1b_0
-  - tqdm=4.64.1=pyhd8ed1ab_0
+  - tqdm=4.64.0=py310haa95532_0
   - traitlets=5.1.1=pyhd3eb1b0_0
   - typing-extensions=4.3.0=py310haa95532_0
   - typing_extensions=4.3.0=py310haa95532_0
@@ -211,6 +214,7 @@ dependencies:
   - wcwidth=0.2.5=pyhd3eb1b0_0
   - webencodings=0.5.1=py310haa95532_1
   - wheel=0.37.1=pyhd3eb1b0_0
+  - widgetsnbextension=3.5.2=py310haa95532_0
   - win_inet_pton=1.1.0=py310h5588dad_4
   - wincertstore=0.2=py310haa95532_2
   - winpty=0.4.3=4
@@ -237,3 +241,4 @@ dependencies:
     - tzdata==2022.2
     - tzlocal==4.2
     - urllib3==1.26.12
+prefix: C:\Users\Daniel.Flynn\Anaconda3\envs\FTOTnetworkEnv

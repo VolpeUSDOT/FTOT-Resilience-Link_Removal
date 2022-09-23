@@ -74,7 +74,7 @@ def disrupt_network(disrupt_type, disrupt_steps, scen_path, edges_remove, disrup
         # sort by the selected column, BC or V
         edges_remove = edges_remove.sort_values(by = edge_col, ascending = disrupt_order_ascending)
 
-        remove_edges_list = edges_remove['edge_id'][:step + 1].to_list()
+        remove_edges_list = edges_remove['edge_id'].loc[:step + 1].to_list()
         remove_edges_list = str(remove_edges_list).replace('[', '(').replace(']', ')')
 
         # Setting capacity to 0 would work, but would need to change Capacity_On to True in the scenario.xml
@@ -165,10 +165,10 @@ def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT):
 
         print('Preparing to search over ' + latest_log)
 
-        unmet_pattern = '(?:INFO\s+Total Unmet Demand : )(\d+)'
-        unmet_cost_pattern = '(?:INFO\s+Total Cost of Unmet Demand\s:\s+\$)(\d+(?:,\d+)?)'
+        unmet_pattern = '(?:INFO\s+Total Unmet Demand : )(\d*.?\d*)'
+        unmet_cost_pattern = '(?:RESULT\s+Total Unmet Demand Penalty:\s+)(\d+(?:,\d+)?)'
         nedge_pattern = '(?:INFO\s+number of optimal edges:\s+)(\d+)'
-        total_cost_pattern = '(?:INFO\s+Total Scenario Cost.+:\s+\$)(\d+(?:,\d+)?)'
+        total_cost_pattern = '(?:RESULT\s+Optimal Objective Value:\s+)(\d+(?:,\d+)?)'
 
         # \s any white space
         # \D non-digit
