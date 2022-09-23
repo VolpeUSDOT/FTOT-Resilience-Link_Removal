@@ -2,7 +2,7 @@
 # coding: utf-8
 
 
-def main():
+def render(base_scen):
     """
     Compile RMarkdown report of scenario results
     
@@ -15,11 +15,9 @@ def main():
     import webbrowser
     import os
 
-    subprocess.call(['Rscript.exe', '--vanilla', 'compile_report.R'])
-    
-    # TODO: assess why this doesn't open the webbrowser from the function.
-    # For now, run these steps in the Jupyter Notebook, webrowser.open works as expected there.
-    
+    subprocess.Popen(['Rscript.exe', 'compile_report.R', base_scen],
+                     stdout = subprocess.PIPE, stderr = subprocess.PIPE)
+                                 
     here = os.getcwd()
 
     webbrowser.open('file://' + os.path.realpath(os.path.join(here, 'Disruption_Results.html')))

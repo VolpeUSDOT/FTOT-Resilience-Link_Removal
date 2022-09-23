@@ -3,6 +3,7 @@ channels:
   - conda-forge
   - defaults
 dependencies:
+  - _r-mutex=1.0.0=anacondar_1
   - appdirs=1.4.4=pyh9f0ad1d_0
   - argon2-cffi=21.3.0=pyhd3eb1b0_0
   - argon2-cffi-bindings=21.2.0=py310h2bbff1b_0
@@ -117,11 +118,37 @@ dependencies:
   - libzlib=1.2.12=hcfcfb64_3
   - lxml=4.9.1=py310h1985fb9_0
   - lz4-c=1.9.3=h2bbff1b_1
+  - m2w64-bwidget=1.9.10=2
+  - m2w64-bzip2=1.0.6=6
+  - m2w64-expat=2.1.1=2
+  - m2w64-fftw=3.3.4=6
+  - m2w64-flac=1.3.1=3
   - m2w64-gcc-libgfortran=5.3.0=6
   - m2w64-gcc-libs=5.3.0=7
   - m2w64-gcc-libs-core=5.3.0=7
+  - m2w64-gettext=0.19.7=2
   - m2w64-gmp=6.1.0=2
+  - m2w64-gsl=2.1=2
+  - m2w64-libiconv=1.14=6
+  - m2w64-libjpeg-turbo=1.4.2=3
+  - m2w64-libogg=1.3.2=3
+  - m2w64-libpng=1.6.21=2
+  - m2w64-libsndfile=1.0.26=2
+  - m2w64-libtiff=4.0.6=2
+  - m2w64-libvorbis=1.3.5=2
   - m2w64-libwinpthread-git=5.0.0.4634.697f757=2
+  - m2w64-libxml2=2.9.3=4
+  - m2w64-mpfr=3.1.4=4
+  - m2w64-openblas=0.2.19=1
+  - m2w64-pcre=8.38=2
+  - m2w64-speex=1.2rc2=3
+  - m2w64-speexdsp=1.2rc3=3
+  - m2w64-tcl=8.6.5=3
+  - m2w64-tk=8.6.5=3
+  - m2w64-tktable=2.10=5
+  - m2w64-wineditline=2.101=5
+  - m2w64-xz=5.2.2=2
+  - m2w64-zlib=1.2.8=10
   - mapclassify=2.4.3=pyhd8ed1ab_0
   - markupsafe=2.1.1=py310h2bbff1b_0
   - matplotlib=3.5.2=py310haa95532_0
@@ -185,6 +212,7 @@ dependencies:
   - qt-main=5.15.6=hf0cf448_0
   - qt-webengine=5.15.9=hb9a9bb5_4
   - qtwebkit=5.212=h0db62b3_6
+  - r-base=3.6.1=hf18239d_1
   - requests=2.28.1=pyhd8ed1ab_1
   - rtree=1.0.0=py310h1cbd46b_1
   - scikit-learn=1.1.2=py310h3a564e9_0

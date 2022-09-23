@@ -8,6 +8,8 @@ output:
     toc_float:
       collapsed: true
       smooth_scroll: false
+params:
+  base_scen: 'C:/FTOT/scenarios/reference_scenarios/rs1_multi_commodity_supply_chain'
 ---
 
 <!-- Add the following line manually to the rendered HTML document so that IE does not block the javascript elements: -->
@@ -22,10 +24,8 @@ library(tidyr)
 library(DT)
 library(plotly)
 library(knitr)
-library(rgdal)
-library(DBI)
 
-base_scen = 'C:/FTOT/scenarios/quick_start/qs7_rmp_proc_dest_multi_inputs'
+scen_name = strsplit(basename(params$base_scen), '_')[[1]][1]
 
 ```
 
@@ -36,7 +36,7 @@ Total scenario cost versus disruption steps. The number of edges (roadway segmen
 ```{r BC_disrupt}
 disrupt_type = 'BC'
 
-disrupt_root = paste(base_scen, disrupt_type, 'disrupt', sep = '_')
+disrupt_root = paste(params$base_scen, disrupt_type, 'disrupt', sep = '_')
 
 res = read.csv(file.path(disrupt_root, 'Results.csv'))
 
@@ -48,9 +48,9 @@ g1 <- ggplot(res, aes(x = disrupt_step,
   geom_step(size = 2, color = 'grey80') +
   geom_point(size = 2, aes(color = nedge)) +
   theme_bw() +
-  ggtitle('Betweeness centrality disruption of QS 7 scenario')
+  ggtitle(paste('Betweeness centrality disruption scenario:', scen_name))
 
-ggsave(plot = g1, filename = 'BC_Disruption_Cost.jpg')
+ggsave(plot = g1, filename = paste0(scen_name, '_BC_Disruption_Cost.jpg'))
 
 
 ggplotly(g1)
@@ -63,12 +63,12 @@ Using the edges in the optimal solution.
 
 Both panels show the relationship between betweenness centrality and background commodity volume flow for the links used in the optimal solution for this scenario.
 
-The left panel colors in the points by the rank in terms of volume. The top 50 links (used for the disruption test) are colored in.
-The right panel colors int the points by the rank in terms of sum of betweeness centrality.
+The left panel colors in the points by the rank in terms of volume. The top links (used for the disruption test) are colored in.
+The right panel colors int the points by the rank in terms of sum of between centrality.
 
 
 ```{r bc_vol, fig.width=10}
-edges <- read.csv(file.path(base_scen, 'Edges_to_Remove.csv'))
+edges <- read.csv(file.path(params$base_scen, 'Edges_to_Remove.csv'))
 
 e_bc <- edges[order(edges$sum_BC, decreasing = T),] %>%
   mutate(BC_rank = order(sum_BC, decreasing = T)) %>%
@@ -84,13 +84,13 @@ g2_v <- ggplot(e_j, aes(x = volume,
                       y = sum_BC)) +
   geom_point(aes(color = V_rank), size = 3) +
   theme_bw() +
-  ggtitle('Betweeness centrality sum and Volume of edges \n in optimal QS 7 scenario solution')
+  ggtitle('Betweeness centrality sum and Volume of edges \n in optimal scenario solution')
 
 g2_bc <- ggplot(e_j, aes(x = volume, 
                       y = sum_BC)) +
   geom_point(aes(color = BC_rank), size = 3) +
   theme_bw() #+
-  #ggtitle('Betweeness centrality sum and Volume of edges in optimal QS 7 scenario solution')
+  #ggtitle('Betweeness centrality sum and Volume of edges in optimal scenario solution')
 
 egg::ggarrange(g2_v, g2_bc, ncol = 2)
 
@@ -117,7 +117,7 @@ datatable(e_j  %>% filter(!is.na(BC_rank) | !is.na(V_rank)) %>%
                    volume,
                    sum_BC,
                    mode_oid),
-          caption = "Road segements (edges) disrupted in QS 7",
+          caption = paste("Road segements (edges) disrupted in", scen_name),
           rownames = F,
           filter = 'top',
           options = list(dom = "ftp",
