@@ -6,6 +6,19 @@ See the [FTOT homepage](https://volpeusdot.github.io/FTOT-Public/) for general i
 
 This tool runs disruptions of an optimal solution, using a network property known as betweenness centrality, or by using the volume of vehicles on roadway links. The tool assesses how resilient an optimal solution is to the removal of key links in the network.
 
+#### Requirements
+
+- `conda`
+- FTOT code
+- FTOT documentation and scenarios
+- 10-25 GB free hard disk space
+
+## Install `conda`
+
+This tool relies on the  package management software `conda` to add all dependencies for this tool, separate from the standard FTOT requirements.
+
+You need either [miniconda](https://docs.conda.io/en/latest/miniconda.html) (1.2 mb) or the full [Anaconda](https://www.anaconda.com/products/distribution) (500+ mb) installation to activate a conda environment. The full Anaconda installation is recommended for most users.
+
 ## Install FTOT code
 
 [Download and install FTOT](https://github.com/VolpeUSDOT/FTOT-Public/wiki/FTOT-Installation-Guide) if you haven't already done so, and install the documentation and scenarios.
