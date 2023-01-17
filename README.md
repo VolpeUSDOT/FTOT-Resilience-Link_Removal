@@ -6,6 +6,8 @@ See the [FTOT homepage](https://volpeusdot.github.io/FTOT-Public) for general in
 
 This tool runs disruptions of an optimal solution, using a network property known as betweenness centrality, or by using the volume of vehicles on roadway links. The tool assesses how resilient an optimal solution is to the removal of key links in the network.
 
+This tool is compatible and has been tested with FTOT version 2022.3.
+
 #### Requirements
 
 - `conda`
