@@ -11,6 +11,7 @@ import arcpy
 import sqlite3
 import os
 from collections import defaultdict
+from ftot import Q_
 
 
 # =========================================================================
@@ -46,7 +47,7 @@ def route_post_optimization_db(the_scenario, logger):
     make_optimal_route_segments_featureclass_from_db(the_scenario, logger)
 
     # Add functional class and urban code to the road segments
-    add_fclass_and_urban_code(the_scenario, logger)
+    add_link_type_and_urban_rural(the_scenario, logger)
 
     dissolve_optimal_route_segments_feature_class_for_mapping(the_scenario, logger)
 
@@ -61,7 +62,9 @@ def route_post_optimization_db(the_scenario, logger):
     generate_scenario_summary(the_scenario, logger)
 
     # Calculate detailed emissions
-    detailed_emissions_setup(the_scenario, logger)
+    # ------------------------------
+    if the_scenario.detailed_emissions_data != 'None':
+        detailed_emissions_setup(the_scenario, logger)
 
     # Make the optimal intermodal facilities
     # ----------------------------
@@ -400,10 +403,13 @@ def make_optimal_route_segments_db(the_scenario, logger):
                                                 commodity_name text, commodity_flow real,
                                                 volume real, capacity real, capacity_minus_volume,
                                                 units text, phase_of_matter text,
-                                                miles real, route_type text, link_dollar_cost real, link_routing_cost real,
+                                                length real, route_type text, link_transport_cost real, link_routing_cost real,
                                                 artificial integer,
-                                                FCLASS integer,
-                                                urban_rural_code integer
+                                                link_type text,
+                                                urban_rural integer,
+                                                limited_access integer,
+                                                from_node_id integer,
+                                                to_node_id integer
                                                 );"""
         db_con.execute(sql)
 
@@ -427,11 +433,13 @@ def make_optimal_route_segments_db(the_scenario, logger):
             ov.converted_capac_minus_volume,
             ov.units,
             ov.time_period,
-            ov.miles,
+            ov.length,
             c.phase_of_matter,
-            nx_e_cost.dollar_cost,
+            nx_e_cost.transport_cost,
             nx_e_cost.route_cost,
-            nx_e.artificial
+            nx_e.artificial,
+            nx_e.from_node_id,
+            nx_e.to_node_id
             from optimal_variables ov
             join commodities as c on c.commodity_name = ov.commodity_name
             join networkx_edges as nx_e on nx_e.edge_id = ov.nx_edge_id
@@ -441,7 +449,7 @@ def make_optimal_route_segments_db(the_scenario, logger):
         db_cur = db_con.execute(sql)
         logger.info("done with the execute...")
 
-        logger.info("starting the fetch all ....possible to increase speed with an index")
+        logger.info("starting the fetch all... possible to increase speed with an index")
         rows = db_cur.fetchall()
 
         row_count = len(rows)
@@ -458,11 +466,13 @@ def make_optimal_route_segments_db(the_scenario, logger):
             capacity_minus_volume = row[6]
             units               = row[7]
             time_period         = row[8]
-            miles               = row[9]
+            length              = row[9]
             phase_of_matter     = row[10]
-            link_dollar_cost    = row[11]
+            link_transport_cost    = row[11]
             link_routing_cost   = row[12]
             artificial          = row[13]
+            from_node_id        = row[14]
+            to_node_id          = row[15]
 
             # format for the optimal route segments table
             optimal_segments_list.append([1,  # rt id
@@ -479,19 +489,22 @@ def make_optimal_route_segments_db(the_scenario, logger):
                                           capacity_minus_volume,
                                           units,
                                           phase_of_matter,
-                                          miles,
+                                          length,
                                           None,  # route type
-                                          link_dollar_cost,
+                                          link_transport_cost,
                                           link_routing_cost,
                                           artificial,
-                                          None,
-                                          None])
+                                          None,  # brought in later
+                                          None,  # brought in later
+                                          None,  # brought in later
+                                          from_node_id,
+                                          to_node_id])
 
     logger.info("done making the optimal_segments_list")
     with sqlite3.connect(the_scenario.main_db) as db_con:
         insert_sql = """
             INSERT into optimal_route_segments
-            values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ;"""
 
         db_con.executemany(insert_sql, optimal_segments_list)
@@ -530,10 +543,11 @@ def make_optimal_route_segments_from_routes_db(the_scenario, logger):
                                                      commodity_name text, commodity_flow real,
                                                      volume real, capacity real, capacity_minus_volume,
                                                      units text, phase_of_matter text,
-                                                     miles real, route_type text, link_dollar_cost real, link_routing_cost real,
+                                                     length real, route_type text, link_transport_cost real, link_routing_cost real,
                                                      artificial integer,
-                                                     FCLASS integer,
-                                                     urban_rural_code integer, from_node_id integer, to_node_id integer
+                                                     link_type text,
+                                                     urban_rural integer, limited_access integer,
+                                                     from_node_id integer, to_node_id integer
                                                      );""")
 
         db_con.execute("""create index if not exists nx_edge_index_2 on networkx_edges(edge_id);""")
@@ -552,9 +566,9 @@ def make_optimal_route_segments_from_routes_db(the_scenario, logger):
             ov.converted_capac_minus_volume,
             ov.units,
             ov.time_period,
-            nx_e.miles,
+            nx_e.length,
             c.phase_of_matter,
-            nx_e_cost.dollar_cost,
+            nx_e_cost.transport_cost,
             nx_e_cost.route_cost ,
             nx_e.artificial,
 			re.scenario_rt_id,
@@ -572,7 +586,7 @@ def make_optimal_route_segments_from_routes_db(the_scenario, logger):
         db_cur = db_con.execute(sql)
         logger.info("done with the execute...")
 
-        logger.info("starting the fetch all ....possible to increase speed with an index")
+        logger.info("starting the fetch all... possible to increase speed with an index")
         rows = db_cur.fetchall()
 
         row_count = len(rows)
@@ -591,9 +605,9 @@ def make_optimal_route_segments_from_routes_db(the_scenario, logger):
             capacity_minus_volume = row[6]
             units               = row[7]
             time_period         = row[8]
-            miles               = row[9]
+            length               = row[9]
             phase_of_matter     = row[10]
-            link_dollar_cost    = row[11]
+            link_transport_cost    = row[11]
             link_routing_cost   = row[12]
             artificial          = row[13]
             scenario_rt_id      = row[14]
@@ -615,11 +629,12 @@ def make_optimal_route_segments_from_routes_db(the_scenario, logger):
                                           capacity_minus_volume,
                                           units,
                                           phase_of_matter,
-                                          miles,
+                                          length,
                                           None,  # route type
-                                          link_dollar_cost,
+                                          link_transport_cost,
                                           link_routing_cost,
                                           artificial,
+                                          None,
                                           None,
                                           None,
                                           from_node_id,
@@ -629,7 +644,7 @@ def make_optimal_route_segments_from_routes_db(the_scenario, logger):
     with sqlite3.connect(the_scenario.main_db) as db_con:
         insert_sql = """
             INSERT into optimal_route_segments
-            values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ;"""
 
         db_con.executemany(insert_sql, optimal_segments_list)
@@ -666,102 +681,119 @@ def make_optimal_scenario_results_db(the_scenario, logger):
                                                   );"""
         db_con.execute(sql)
 
+        # populate a temporary table for multimodal commodities
+        sql_multimodal = "drop table if exists tmp_multimodal_commodities;"
+        db_con.execute(sql_multimodal)
+
+        sql_multimodal = """ create table tmp_multimodal_commodities as
+                             select distinct
+                             scenario_rt_id,
+                             commodity_name,
+                             'multimodal' as multimodal
+                             from optimal_route_segments
+                             where artificial = 2
+                             ;"""
+        db_con.execute(sql_multimodal)
+
         # sum all the flows on artificial = 1, and divide by 2 for each commodity.
         # this assumes we have flows leaving and entering a facility on 1 artificial link at the beginning and the end.
+        # when route tracking is enabled (ndrOn = True), identify and separately report routes that are multimodal for each commodity.
         logger.debug("start: summarize total flow")
         sql_total_flow = """ -- total flow query
-                             insert into optimal_scenario_results
-                             select
-                             'commodity_summary',
-                             commodity_name,
-                             NULL,
-                             'total_flow',
-                             network_source_id,
-                             sum(commodity_flow)/2,
-                             units,
-                             ""
-                             from optimal_route_segments
-                             where artificial = 1
-                             group by commodity_name, network_source_id
-                             ;"""
+                        insert into optimal_scenario_results
+                        select
+                        'commodity_summary',
+                        commodity_name,
+                        NULL,
+                        'total_flow',
+                        network_source_id,
+                        sum(commodity_flow)/2,
+                        units,
+                        ""
+                        from optimal_route_segments
+                        where artificial = 1
+                        group by commodity_name, network_source_id
+                        ;"""
         db_con.execute(sql_total_flow)
 
-        # miles by mode
-        # total network miles, not route miles
-        logger.debug("start: summarize total miles")
-        sql_total_miles = """ -- total scenario miles (not route miles)
+        # length by mode
+        # total network length, not route distance traveled
+        logger.debug("start: summarize total distance")
+        sql_total_length = """ -- total scenario distance (not route distance)
                               insert into optimal_scenario_results
                               select
                               'commodity_summary',
                               commodity_name,
                               NULL,
-                              'miles',
+                              'network_used',
                               network_source_id,
-                              sum(miles),
-                              'miles',
+                              sum(length),
+                              '{}',
                               ''
                               from 
-                              (select commodity_name, network_source_id, min(miles) as miles,network_source_oid from
+                              (select commodity_name, network_source_id, min(length) as length,network_source_oid from
                               optimal_route_segments group by network_source_oid, commodity_name, network_source_id)
                               group by commodity_name, network_source_id
-                              ;"""
-        db_con.execute(sql_total_miles)
+                              ;""".format(the_scenario.default_units_distance)
+        db_con.execute(sql_total_length)
 
-        logger.debug("start: summarize unit miles")
-        # liquid unit-miles
-        sql_liquid_unit_miles = """ -- total liquid unit-miles by mode
+        logger.debug("start: summarize unit distance")
+        # liquid unit-distance
+        sql_liquid_unit_distance = """ -- total liquid unit-distance by mode
                                     insert into optimal_scenario_results
                                     select
                                     'commodity_summary',
                                     commodity_name,
                                     NULL,
-                                    "{}-miles",
+                                    "commodity-distance",
                                     network_source_id,
-                                    sum(commodity_flow*miles),
-                                    '{}-miles',
+                                    sum(commodity_flow*length),
+                                    '{}-{}',
                                     ""
                                     from optimal_route_segments
                                     where units = '{}'
                                     group by commodity_name, network_source_id
-                                    ;""".format(the_scenario.default_units_liquid_phase, the_scenario.default_units_liquid_phase, the_scenario.default_units_liquid_phase)
-        db_con.execute(sql_liquid_unit_miles)
+                                    ;""".format(the_scenario.default_units_liquid_phase, the_scenario.default_units_distance,
+                                                the_scenario.default_units_liquid_phase)
+        db_con.execute(sql_liquid_unit_distance)
 
-        # solid unit-miles for completeness
-        sql_solid_unit_miles = """ -- total solid unit-miles by mode
+        # solid unit-distance for completeness
+        sql_solid_unit_distance = """ -- total solid unit-distance by mode
                                    insert into optimal_scenario_results
                                    select
                                    'commodity_summary',
                                    commodity_name,
                                    NULL,
-                                   "{}-miles",
+                                   "commodity-distance",
                                    network_source_id,
-                                   sum(commodity_flow*miles),
-                                   '{}-miles',
+                                   sum(commodity_flow*length),
+                                   '{}-{}',
                                    ""
                                    from optimal_route_segments
                                    where units = '{}'
                                    group by commodity_name, network_source_id
-                                   ;""".format(the_scenario.default_units_solid_phase, the_scenario.default_units_solid_phase, the_scenario.default_units_solid_phase)
-        db_con.execute(sql_solid_unit_miles)
+                                   ;""".format(the_scenario.default_units_solid_phase, the_scenario.default_units_distance,
+                                               the_scenario.default_units_solid_phase)
+        db_con.execute(sql_solid_unit_distance)
 
         logger.debug("start: summarize dollar costs")
         # dollar cost and routing cost by mode
-        # multiply the mileage by the flow
-        sql_dollar_costs = """ -- total dollar_cost
+        # multiply the distance by the flow
+        sql_transport_costs = """ -- total transport_cost
                                insert into optimal_scenario_results
                                select
                                'commodity_summary',
                                commodity_name,
                                NULL,
-                               "dollar_cost",
+                               "transport_cost",
                                network_source_id,
-                               sum(commodity_flow*link_dollar_cost),
-                               'USD',
+                               sum(commodity_flow*link_transport_cost),
+                               '{}',
                                ""
                                from optimal_route_segments
                                group by commodity_name, network_source_id
-                               ;"""
-        db_con.execute(sql_dollar_costs)
+                               ;""".format(the_scenario.default_units_currency)
+        db_con.execute(sql_transport_costs)
 
         logger.debug("start: summarize routing costs")
         sql_routing_costs = """ -- total routing_cost
@@ -773,11 +805,11 @@ def make_optimal_scenario_results_db(the_scenario, logger):
                                 "routing_cost",
                                 network_source_id,
                                 sum(commodity_flow*link_routing_cost),
-                                'USD',
+                                '{}',
                                 ""
                                 from optimal_route_segments
                                 group by commodity_name, network_source_id
-                                ;"""
+                                ;""".format(the_scenario.default_units_currency)
         db_con.execute(sql_routing_costs)
 
         # loads by mode and commodity
@@ -825,7 +857,7 @@ def make_optimal_scenario_results_db(the_scenario, logger):
         # VMT
         # Do not report for pipeline
 
-        logger.debug("start: summarize VMT")
+        logger.debug("start: summarize vehicle-distance traveled")
         for row in mode_and_commodity_list:
             mode = row[0]
             commodity_name = row[1]
@@ -834,64 +866,75 @@ def make_optimal_scenario_results_db(the_scenario, logger):
                 pass
             else:
                 vehicle_payload = attributes_dict[commodity_name][mode]['Load'].magnitude
-                # vmt is loads multiplied by miles
+                # vmt is loads multiplied by distance
                 # we know the flow on a link we can calculate the loads on that link
-                # and multiply by the miles to get VMT.
-                sql_vmt = """ -- VMT by mode and commodity
+                # and multiply by the distance to get VMT.
+                sql_vmt = """ -- Vehicle-Distance Traveled by mode and commodity
                               insert into optimal_scenario_results
                               select
                               'commodity_summary',
                               commodity_name,
                               NULL,
-                              'vmt',
+                              'vehicle-distance_traveled',
                               '{}',
-                              sum(commodity_flow * miles/{}),
-                              'VMT',
+                              sum(commodity_flow * length/{}),
+                              'vehicle-{}',
                               ""
                               from optimal_route_segments
                               where network_source_id = '{}' and commodity_name = '{}'
                               group by commodity_name, network_source_id
-                              ;""".format(mode, vehicle_payload, mode, commodity_name)
+                              ;""".format(mode, vehicle_payload, the_scenario.default_units_distance, mode, commodity_name)
                 db_con.execute(sql_vmt)
 
-        # CO2-- convert commodity and miles to CO2
+        # CO2-- convert commodity and distance to CO2
         # trucks is a bit different than rail, and water
-        # fclass = 1 for interstate
-        # rural_urban_code  == 99999 for rural, all else urban
+        # limited_access = 1-- otherwise 0
+        # urban_rural: urban = 1, rural = 0
         # road CO2 emission factors in g/mi
 
-        logger.debug("start: summarize CO2")
-        fclass_and_urban_code = {}
-        fclass_and_urban_code["CO2urbanRestricted"] = {'where': "urban_rural_code < 99999 and fclass = 1"}
-        fclass_and_urban_code["CO2urbanUnrestricted"] = {'where': "urban_rural_code < 99999 and fclass <> 1"}
-        fclass_and_urban_code["CO2ruralRestricted"] = {'where': "urban_rural_code = 99999 and fclass = 1"}
-        fclass_and_urban_code["CO2ruralUnrestricted"] = {'where': "urban_rural_code = 99999 and fclass <> 1"}
+        logger.debug("start: summarize emissions")
 
+        # Where clauses for road types
+        access_and_urban_code = {}
+        access_and_urban_code["general"] = {'where': "urban_rural IS NULL and limited_access IS NULL"}
+        access_and_urban_code["urban"] = {'where': "urban_rural == 1 and limited_access IS NULL"}
+        access_and_urban_code["rural"] = {'where': "urban_rural == 0 and limited_access IS NULL"}
+        access_and_urban_code["limited"] = {'where': "urban_rural IS NULL and limited_access == 1"}
+        access_and_urban_code["nonlimited"] = {'where': "urban_rural == 0 and limited_access IS NULL"}
+        access_and_urban_code["urban_limited"] = {'where': "urban_rural == 1 and limited_access == 1"}
+        access_and_urban_code["urban_nonlimited"] = {'where': "urban_rural == 1 and limited_access == 0"}
+        access_and_urban_code["rural_limited"] = {'where': "urban_rural == 0 and limited_access == 1"}
+        access_and_urban_code["rural_nonlimited"] = {'where': "urban_rural == 0 and limited_access == 0"}
+
+        # Loop through CO2
+        # Separate SQL queries if road vs. non-road
         for row in mode_and_commodity_list:
             mode = row[0]
             commodity_name = row[1]
             if 'road' == mode:
                 vehicle_payload = attributes_dict[commodity_name][mode]['Load'].magnitude
-                for road_co2_measure_name in fclass_and_urban_code:
-                    co2_val = attributes_dict[commodity_name][mode][road_co2_measure_name].magnitude #g/mi
-                    where_clause = fclass_and_urban_code[road_co2_measure_name]['where']
-                    sql_road_co2 = """ -- CO2 for road by fclass and urban_rural_code
-                                       insert into optimal_scenario_results
-                                       select
-                                       'commodity_summary',
-                                       commodity_name,
-                                       NULL,
-                                       '{}', -- measure_name
-                                       '{}', -- mode
-                                       sum(commodity_flow * miles * {} /{}), -- value (VMT * co2 scaler)
-                                       'grams', -- units
-                                       ''
-                                       from optimal_route_segments
-                                       where network_source_id = '{}' and commodity_name = '{}' and {} -- additional where_clause
-                                       group by commodity_name, network_source_id
-                                       ;""".format(road_co2_measure_name, mode, co2_val, vehicle_payload, mode, commodity_name, where_clause)
-                    db_con.execute(sql_road_co2)
+                for road_measure_name in access_and_urban_code:
+                    co2_val = attributes_dict[commodity_name][mode]['co2'][road_measure_name].magnitude
+                    where_clause = access_and_urban_code[road_measure_name]['where']
 
+                    sql_road_co2 = """ -- co2 for road by limited_access and urban_rural designation
+                                        insert into optimal_scenario_results
+                                        select
+                                        'commodity_summary',
+                                        commodity_name,
+                                        NULL,
+                                        'co2_{}', -- measure_name
+                                        '{}', -- mode
+                                        sum(commodity_flow * length * {} /{}), -- value (VMT * emissions scaler)
+                                        'grams', -- units
+                                        ''
+                                        from optimal_route_segments
+                                        where network_source_id = '{}' and commodity_name = '{}' and {} -- additional where_clause
+                                        and artificial != 1 -- exclude artificial links
+                                        group by commodity_name, network_source_id
+                                        ;""".format(road_measure_name, mode, co2_val, vehicle_payload, mode, commodity_name, where_clause)
+                    db_con.execute(sql_road_co2)
+                
                 # now total the road co2 values
                 sql_co2_road_total = """insert into optimal_scenario_results
                                         select
@@ -904,7 +947,7 @@ def make_optimal_scenario_results_db(the_scenario, logger):
                                         units,
                                         ""
                                         from optimal_scenario_results osr
-                                        where osr.measure like 'CO2%ed'
+                                        where osr.measure like 'co2^_%' ESCAPE '^'
                                         group by commodity
                                         ;"""
                 db_con.execute(sql_co2_road_total)
@@ -912,27 +955,27 @@ def make_optimal_scenario_results_db(the_scenario, logger):
                 # now delete the intermediate records
                 sql_co2_delete = """delete
                                     from optimal_scenario_results
-                                    where measure like 'CO2%ed'
+                                    where measure like 'co2^_%' ESCAPE '^'
                                     ;"""
                 db_con.execute(sql_co2_delete)
 
-            else: 
-                co2_emissions = attributes_dict[commodity_name][mode]['CO2_Emissions'].magnitude #g/ton/mi
-                sql_co2 = """ -- CO2 by mode and commodity
-                              insert into optimal_scenario_results
-                              select
-                              'commodity_summary',
-                              commodity_name,
-                              NULL,
-                              'co2',
-                              '{}',
-                              sum(commodity_flow * miles * {}),
-                              'grams',
-                              ""
-                              from optimal_route_segments
-                              where network_source_id = '{}' and commodity_name = '{}'
-                              group by commodity_name, network_source_id
-                              ;""".format(mode, co2_emissions, mode, commodity_name)
+            else:
+                co2_val = attributes_dict[commodity_name][mode]['co2']['general'].magnitude
+                sql_co2 = """ -- co2 by mode and commodity
+                                insert into optimal_scenario_results
+                                select
+                                'commodity_summary',
+                                commodity_name,
+                                NULL,
+                                'co2',
+                                '{}',
+                                sum(commodity_flow * length * {}),
+                                'grams',
+                                ''
+                                from optimal_route_segments
+                                where network_source_id = '{}' and commodity_name = '{}' and artificial != 1
+                                group by commodity_name, network_source_id
+                                ;""".format(mode, co2_val, mode, commodity_name)
                 db_con.execute(sql_co2)
 
         # Fuel burn
@@ -950,9 +993,9 @@ def make_optimal_scenario_results_db(the_scenario, logger):
                 vehicle_payload = attributes_dict[commodity_name][mode]['Load'].magnitude
                 fuel_efficiency = attributes_dict[commodity_name][mode]['Fuel_Efficiency'].magnitude #mi/gal
 
-                # vmt is loads multiplied by miles
+                # vmt is loads multiplied by length
                 # we know the flow on a link we can calculate the loads on that link
-                # and multiply by the miles to get VMT. Then divide by fuel efficiency to get fuel burn
+                # and multiply by the length to get VMT. Then divide by fuel efficiency to get fuel burn
                 sql_fuel_burn = """ -- Fuel burn by mode and commodity
                                     insert into optimal_scenario_results
                                     select
@@ -961,7 +1004,7 @@ def make_optimal_scenario_results_db(the_scenario, logger):
                                     NULL,
                                     'fuel_burn',
                                     '{}',
-                                    sum(commodity_flow * miles/{}/{}),
+                                    sum(commodity_flow * length/{}/{}),
                                     'Gallons',
                                     ''
                                     from optimal_route_segments
@@ -985,7 +1028,7 @@ def make_optimal_scenario_results_db(the_scenario, logger):
                                     f.facility_name,
                                     "destination_demand_potential",
                                     "total",
-                                    fc.quantity,
+                                    fc.scaled_quantity,
                                     fc.units,
                                     ''
                                     from facility_commodities fc
@@ -1004,7 +1047,7 @@ def make_optimal_scenario_results_db(the_scenario, logger):
                             f.facility_name,
                             "rmp_supply_potential",
                             "total",
-                            fc.quantity,
+                            fc.scaled_quantity,
                             fc.units,
                             ''
                             from facility_commodities fc
@@ -1014,6 +1057,45 @@ def make_optimal_scenario_results_db(the_scenario, logger):
                             where fti.facility_type = 'raw_material_producer'
                             order by facility_name
                             ;"""
+
+        # Processor capacity report (input)
+        sql_proc_input_capacity = """insert into optimal_scenario_results
+                                     select
+                                     "facility_summary",
+                                     c.commodity_name,
+                                     f.facility_name,
+                                     "processor_input_capacity",
+                                     "total",
+                                     IFNULL(fc.scaled_quantity, "Unconstrained"),
+                                     fc.units,
+                                     ''
+                                     from facility_commodities fc
+                                     join facilities f on f.facility_id = fc.facility_id
+                                     join commodities c on c.commodity_id = fc.commodity_id
+                                     join facility_type_id fti on fti.facility_type_id  = f.facility_type_id
+                                     where fti.facility_type = 'processor' and fc.io = 'i'
+                                     order by facility_name
+                                     ;"""
+
+        # Processor capacity report (output)
+        sql_proc_output_capacity = """insert into optimal_scenario_results
+                                      select
+                                      "facility_summary",
+                                      c.commodity_name,
+                                      f.facility_name,
+                                      "processor_output_capacity",
+                                      "total",
+                                      IFNULL(fc.scaled_quantity, "Unconstrained"),
+                                      fc.units,
+                                      ''
+                                      from facility_commodities fc
+                                      join facilities f on f.facility_id = fc.facility_id
+                                      join commodities c on c.commodity_id = fc.commodity_id
+                                      join facility_type_id fti on fti.facility_type_id  = f.facility_type_id
+                                      where fti.facility_type = 'processor' and fc.io = 'o'
+                                      order by facility_name
+                                      ;"""
+        
 
         # initialize SQL queries that vary based on whether routes are used or not
         logger.debug("start: summarize optimal supply and demand")
@@ -1047,7 +1129,7 @@ def make_optimal_scenario_results_db(the_scenario, logger):
                                                      ov.d_facility,
                                                      "destination_demand_optimal_frac",
                                                      ne.mode_source,
-                                                     (sum(ov.variable_value) / fc.quantity),
+                                                     (sum(ov.variable_value) / fc.scaled_quantity),
                                                      "fraction",
                                                      ''
                                                      from optimal_variables ov
@@ -1093,7 +1175,7 @@ def make_optimal_scenario_results_db(the_scenario, logger):
                                              ov.o_facility,
                                              "rmp_supply_optimal_frac",
                                              ne.mode_source,
-                                             (sum(ov.variable_value) / fc.quantity),
+                                             (sum(ov.variable_value) / fc.scaled_quantity),
                                              "fraction",
                                              ''
                                              from optimal_variables ov
@@ -1129,7 +1211,7 @@ def make_optimal_scenario_results_db(the_scenario, logger):
                                       where ov.o_facility > 0 and ov.edge_type = 'transport' and fti.facility_type = 'processor'
                                       group by ov.commodity_name, ov.o_facility, ne.mode_source, ov.units
                                       ;"""
-
+            
             sql_processor_input = """insert into optimal_scenario_results
                                      select
                                      "facility_summary",
@@ -1160,14 +1242,14 @@ def make_optimal_scenario_results_db(the_scenario, logger):
                                        "processor_amortized_build_cost",
                                        "total",
                                        f.build_cost,
-                                       "USD",
+                                       "{}",
                                        ''
                                        from facilities f
                                        join optimal_variables ov on f.facility_name = ov.o_facility
                                        join facility_type_id fti on fti.facility_type_id  = f.facility_type_id
                                        where ov.o_facility > 0 and ov.edge_type = 'transport' and fti.facility_type = 'processor' and f.build_cost > 0
                                        group by ov.o_facility
-                                       ;"""
+                                       ;""".format(the_scenario.default_units_currency)
 
         else :
             sql_destination_demand_optimal = """insert into optimal_scenario_results
@@ -1196,7 +1278,7 @@ def make_optimal_scenario_results_db(the_scenario, logger):
                                                      ov.d_facility,
                                                      "destination_demand_optimal_frac",
                                                      ov.mode,
-                                                     (sum(ov.variable_value) / fc.quantity),
+                                                     (sum(ov.variable_value) / fc.scaled_quantity),
                                                      "fraction",
                                                      ''
                                                      from optimal_variables ov
@@ -1236,7 +1318,7 @@ def make_optimal_scenario_results_db(the_scenario, logger):
                                              ov.o_facility,
                                              "rmp_supply_optimal_frac",
                                              ov.mode,
-                                             (sum(ov.variable_value) / fc.quantity),
+                                             (sum(ov.variable_value) / fc.scaled_quantity),
                                              "fraction",
                                              ''
                                              from optimal_variables ov
@@ -1295,48 +1377,123 @@ def make_optimal_scenario_results_db(the_scenario, logger):
                                        "processor_amortized_build_cost",
                                        "total",
                                        f.build_cost,
-                                       "USD",
+                                       "{}",
                                        ''
                                        from facilities f
                                        join optimal_variables ov on f.facility_name = ov.o_facility
                                        join facility_type_id fti on fti.facility_type_id  = f.facility_type_id
                                        where o_facility > 0 and edge_type = 'transport' and fti.facility_type = 'processor' and f.build_cost > 0
                                        group by o_facility
-                                       ;"""
+                                       ;""".format(the_scenario.default_units_currency)
 
         db_con.execute(sql_destination_demand)
         db_con.execute(sql_destination_demand_optimal)
         db_con.execute(sql_destination_demand_optimal_frac)
         db_con.execute(sql_rmp_supply)
+        db_con.execute(sql_proc_input_capacity)
+        db_con.execute(sql_proc_output_capacity)
+
         db_con.execute(sql_rmp_supply_optimal)
         db_con.execute(sql_rmp_supply_optimal_frac)
         db_con.execute(sql_processor_output)
         db_con.execute(sql_processor_input)
         db_con.execute(sql_processor_build_cost)
 
-        # measure totals
-        sql_total = """insert into optimal_scenario_results
+        # totals across modes
+        sql_allmodes = """insert into optimal_scenario_results
                        select table_name, commodity, facility_name, measure, "allmodes" as mode, sum(value), units, notes
                        from optimal_scenario_results
+                       where mode != "total"
                        group by table_name, commodity, facility_name, measure
                        ;"""
-        db_con.execute(sql_total)
+        db_con.execute(sql_allmodes)
 
-        # delete redundant total rows
-        sql_delete = """delete from optimal_scenario_results
-                        where (measure in ("rmp_supply_potential","destination_demand_potential","processor_amortized_build_cost"))
-                        and mode = "allmodes"
-                        ;"""
-        db_con.execute(sql_delete)
+        # processor optimal fractions, as share of input and output capacity
+        sql_proc_input_optimal_frac = """insert into optimal_scenario_results
+                                             select
+                                             "facility_summary",
+                                             ov.commodity_name,
+                                             ov.d_facility,
+                                             "processor_input_optimal_frac",
+                                             "allmodes",
+                                             IFNULL((sum(ov.variable_value) / fc.scaled_quantity), "Unconstrained"),
+                                             "fraction",
+                                             ''
+                                             from optimal_variables ov
+                                             join facilities f on f.facility_name = ov.d_facility
+                                             join facility_commodities fc on fc.facility_id = f.facility_id and fc.commodity_id = ov.commodity_id
+                                             join commodities c on c.commodity_id = fc.commodity_id
+                                             join facility_type_id fti on fti.facility_type_id  = f.facility_type_id
+                                             where ov.d_facility > 0 and ov.edge_type = 'transport' and fti.facility_type = 'processor' and fc.io = 'i'
+                                             group by ov.commodity_name, ov.d_facility
+                                             ;"""
+        db_con.execute(sql_proc_input_optimal_frac)
+
+        sql_proc_output_optimal_frac = """insert into optimal_scenario_results
+                                             select
+                                             "facility_summary",
+                                             ov.commodity_name,
+                                             ov.o_facility,
+                                             "processor_output_optimal_frac",
+                                             "allmodes",
+                                             IFNULL((sum(ov.variable_value) / fc.scaled_quantity), "Unconstrained"),
+                                             "fraction",
+                                             ''
+                                             from optimal_variables ov
+                                             join facilities f on f.facility_name = ov.o_facility
+                                             join facility_commodities fc on fc.facility_id = f.facility_id and fc.commodity_id = ov.commodity_id
+                                             join commodities c on c.commodity_id = fc.commodity_id
+                                             join facility_type_id fti on fti.facility_type_id  = f.facility_type_id
+                                             where ov.o_facility > 0 and ov.edge_type = 'transport' and fti.facility_type = 'processor' and fc.io = 'o'
+                                             group by ov.commodity_name, ov.o_facility
+                                             ;"""
+        
+        db_con.execute(sql_proc_output_optimal_frac)
+
+        # manually set unit for "vehicles" for "allmodes"
+        sql_vehicles = """update optimal_scenario_results
+                          set units = 'vehicles'
+                          where measure = 'vehicles' and mode = 'allmodes'
+                       ;"""
+
+        db_con.execute(sql_vehicles)
 
         # scenario totals
         sql_total = """insert into optimal_scenario_results
                        select "scenario_summary" as table_name, NULL as commodity, NULL as facility_name, measure, mode, sum(value), units, notes
                        from optimal_scenario_results
-                       where measure in ("co2", "dollar_cost", "fuel_burn", "miles", "processor_amortized_build_cost", "vehicles", "vmt")
+                       where measure in ("co2", "transport_cost", "fuel_burn", "network_used", "processor_amortized_build_cost", "vehicles", "vehicle-distance_traveled")
                        group by measure, mode, units
                        ;"""
         db_con.execute(sql_total)
+
+        # get a list of the commodities that have multimodal movements
+        sql = "select distinct commodity_name from tmp_multimodal_commodities;"
+        db_cur = db_con.execute(sql)
+        mm_commodities = db_cur.fetchall()
+
+        # add a note to optimal_scenario_results for commodities with multimodal flows
+        update_sql = """
+                     UPDATE optimal_scenario_results
+                     set notes = 'includes multimodal flows'
+                     where measure = 'total_flow' and mode = 'allmodes'
+                     and commodity = ?
+                     ;"""
+        db_con.executemany(update_sql, mm_commodities)
+
+        # suppress modes for total_flow if commodity is multimodal
+        delete_sql = """
+                DELETE from optimal_scenario_results
+                where measure = 'total_flow' and mode != 'allmodes'
+                and commodity = ?
+                ;"""
+        
+        db_con.executemany(delete_sql, mm_commodities)
+        db_con.commit()
+
+        # delete the temporary table for multimodal commodities
+        logger.debug("drop the tmp_multimodal_commodities table")
+        db_con.execute("drop table if exists tmp_multimodal_commodities;")
 
     logger.debug("finish: make_optimal_scenario_results_db()")
 
@@ -1366,12 +1523,14 @@ def generate_scenario_summary(the_scenario, logger):
             logger.result('{}_{}_{}_{}: \t {:,.2f} : \t {}'.format(row[0].upper(), row[1].upper(), row[3].upper(), row[4].upper(), row[5], row[6]))
 
         # Log facility results
-        sql = "select * from optimal_scenario_results where table_name = 'facility_summary' order by commodity, measure, mode;"
+        sql = "select * from optimal_scenario_results where table_name = 'facility_summary' order by facility_name, measure, commodity, mode;"
         db_cur = db_con.execute(sql)
         data = db_cur.fetchall()
         for row in data:
             if row[3] == 'processor_amortized_build_cost':
                 logger.result('{}_{}_{}_{}: \t {:,.2f} : \t {}'.format(row[0].upper(), row[2].upper(), row[3].upper(), row[4].upper(), row[5], row[6]))
+            elif type(row[5]) == str:
+                logger.result('{}_{}_{}_{}_{}: \t {} : \t {}'.format(row[0].upper(), row[2].upper(), row[3].upper(), row[1].upper(), row[4].upper(), row[5], row[6]))
             else:
                 logger.result('{}_{}_{}_{}_{}: \t {:,.2f} : \t {}'.format(row[0].upper(), row[2].upper(), row[3].upper(), row[1].upper(), row[4].upper(), row[5], row[6]))
 
@@ -1386,100 +1545,145 @@ def detailed_emissions_setup(the_scenario, logger):
 
     with sqlite3.connect(the_scenario.main_db) as db_con:
 
+        # initiate detailed_emissions DB table
         db_con.executescript("""
             drop table if exists detailed_emissions;
             create table detailed_emissions(
             commodity text,
             mode text,
             measure text,
-            value text,
-            units text,
-            constraint unique_elements unique(commodity, mode, measure))
+            value real,
+            units text
+            --constraint unique_elements unique(commodity, mode, measure)
+            )
             ;""")
 
-        # set isEmissionsReporting to True to suppress duplicate logger statements when calling ftot_supporting_gis for the second time
-        attributes_dict = ftot_supporting_gis.get_commodity_vehicle_attributes_dict(the_scenario, logger, isEmissionsReporting=True)
+        # query commodity_vehicle_attrs DB table
+        # populate attributes dictionary
+        attribute_dict = {}
+        commodity_vehicle_attrs = db_con.execute("select * from commodity_vehicle_attrs;")
+        commodity_vehicle_attrs = commodity_vehicle_attrs.fetchall()
+        for row in commodity_vehicle_attrs:
+            commodity = row[0]
+            mode = row[1]
+            attribute = row[2]
+            link_type = row[3]
+            value = Q_(row[4])
 
+            if attribute in ['Load','Fuel_Efficiency']:
+                if commodity not in attribute_dict:
+                    attribute_dict[commodity] = {mode: {attribute: value}}
+                elif mode not in attribute_dict[commodity]:
+                    attribute_dict[commodity][mode] = {attribute: value}
+                elif attribute not in attribute_dict[commodity][mode]:
+                    attribute_dict[commodity][mode][attribute] = value
+
+            else: # emissions
+                if commodity not in attribute_dict:
+                    attribute_dict[commodity] = {mode: {attribute: {link_type: value}}}
+                elif mode not in attribute_dict[commodity]:
+                    attribute_dict[commodity][mode] = {attribute: {link_type: value}}
+                elif attribute not in attribute_dict[commodity][mode]:
+                    attribute_dict[commodity][mode][attribute] = {link_type: value}
+                elif link_type not in attribute_dict[commodity][mode][attribute]:
+                    attribute_dict[commodity][mode][attribute][link_type] = value
+            
+        # query optimal_route_segments table
         sql_mode_commodity = "select network_source_id, commodity_name from optimal_route_segments group by network_source_id, commodity_name;"
         db_cur = db_con.execute(sql_mode_commodity)
         mode_and_commodity_list = db_cur.fetchall()
 
+        # Loop through all gases, not just CO2
+        # Separate SQL queries if road vs. non-road
 
-        # Convert commodity and miles to pollutant totals
-        # ROAD:
-        # fclass = 1 for interstate
-        # rural_urban_code  == 99999 for rural, all else urban
-        # road CO2 emission factors in g/mi
+        # --- ROAD ---
 
-        fclass_and_urban_code = {}
-        fclass_and_urban_code["Urban_Restricted"] = {'where': "urban_rural_code < 99999 and fclass = 1"}
-        fclass_and_urban_code["Urban_Unrestricted"] = {'where': "urban_rural_code < 99999 and fclass <> 1"}
-        fclass_and_urban_code["Rural_Restricted"] = {'where': "urban_rural_code = 99999 and fclass = 1"}
-        fclass_and_urban_code["Rural_Unrestricted"] = {'where': "urban_rural_code = 99999 and fclass <> 1"}
+        # Where clauses for road types
+        access_and_urban_code = {}
+        access_and_urban_code["general"] = {'where': "urban_rural IS NULL and limited_access IS NULL"}
+        access_and_urban_code["urban"] = {'where': "urban_rural == 1 and limited_access IS NULL"}
+        access_and_urban_code["rural"] = {'where': "urban_rural == 0 and limited_access IS NULL"}
+        access_and_urban_code["limited"] = {'where': "urban_rural IS NULL and limited_access == 1"}
+        access_and_urban_code["nonlimited"] = {'where': "urban_rural == 0 and limited_access IS NULL"}
+        access_and_urban_code["urban_limited"] = {'where': "urban_rural == 1 and limited_access == 1"}
+        access_and_urban_code["urban_nonlimited"] = {'where': "urban_rural == 1 and limited_access == 0"}
+        access_and_urban_code["rural_limited"] = {'where': "urban_rural == 0 and limited_access == 1"}
+        access_and_urban_code["rural_nonlimited"] = {'where': "urban_rural == 0 and limited_access == 0"}
+
 
         for row in mode_and_commodity_list:
             mode = row[0]
             commodity_name = row[1]
-            for attr in attributes_dict[commodity_name][mode]:
-                if attr not in ['co','co2e','ch4','n2o','nox','pm10','pm2.5','voc']:
-                    continue
-                elif mode == 'road':
-                    vehicle_payload = attributes_dict[commodity_name][mode]['Load'].magnitude
-                    for road_measure_name in fclass_and_urban_code:
-                        ef = attributes_dict[commodity_name][mode][attr][road_measure_name].magnitude #g/mi
-                        where_clause = fclass_and_urban_code[road_measure_name]['where']
-                        sql_road = """ -- {} for road by fclass and urban_rural_code
-                                       insert into detailed_emissions
-                                       select
-                                       commodity_name,
-                                       '{}',
-                                       '{}',
-                                       sum(commodity_flow * miles * {} /{}),
-                                       'grams'
-                                       from optimal_route_segments
-                                       where network_source_id = '{}' and commodity_name = '{}' and {}
-                                       group by commodity_name, network_source_id
-                                       ;""".format(attr, mode, road_measure_name, ef, vehicle_payload, mode, commodity_name, where_clause)
-                        db_con.execute(sql_road)
+            vehicle_payload = attribute_dict[commodity_name][mode]['Load'].magnitude
+
+            if 'road' == mode:
+                for pollutant in attribute_dict[commodity_name][mode]:
+                    if pollutant in ['Load','Fuel_Efficiency']:
+                        continue # skip because not a pollutant
+
+                    for road_measure_name in attribute_dict[commodity_name][mode][pollutant]:
+                        emissions_val = attribute_dict[commodity_name][mode][pollutant][road_measure_name].magnitude 
+                        where_clause = access_and_urban_code[road_measure_name]['where']
+                            
+                        sql_road_emissions = """ -- emissions for road by limited_access and urban_rural designation
+                                    insert into detailed_emissions
+                                    select
+                                    commodity_name,
+                                    '{}', -- mode
+                                    '{}_{}', -- measure_name
+                                    sum(commodity_flow * length * {} /{}), -- value (VMT * emissions scaler)
+                                    'grams' -- units
+                                    from optimal_route_segments
+                                    where network_source_id = '{}' and commodity_name = '{}' and {} -- additional where_clause
+                                    and artificial != 1 -- exclude artificial links
+                                    group by commodity_name, network_source_id
+                                    ;""".format(mode, pollutant, road_measure_name, emissions_val, vehicle_payload, mode, commodity_name, where_clause)
+                        db_con.execute(sql_road_emissions)
+                    
 
                     # now total the road values
-                    sql_road_total = """insert into detailed_emissions
-                                            select
-                                            commodity,
-                                            mode,
-                                            '{}',
-                                            sum(em.value),
-                                            units
-                                            from detailed_emissions em
-                                            where em.measure like '%stricted'
-                                            group by commodity
-                                            ;""".format(attr)
-                    db_con.execute(sql_road_total)
+                    sql_emissions_road_total = """insert into detailed_emissions
+                                     select
+                                     commodity,
+                                     mode,
+                                     '{}', --pollutant
+                                     sum(de.value),
+                                     units
+                                     from detailed_emissions de
+                                     where de.measure like '{}^_%' ESCAPE '^'
+                                     group by commodity, mode, units
+                                     ;""".format(pollutant, pollutant)
+                    db_con.execute(sql_emissions_road_total)
 
                     # now delete the intermediate records
-                    sql_road_delete = """delete
-                                        from detailed_emissions
-                                        where measure like '%stricted'
-                                        ;"""
-                    db_con.execute(sql_road_delete)
+                    sql_emissions_delete = """delete
+                                from detailed_emissions
+                                where measure like '{}^_%' ESCAPE '^'
+                                ;""".format(pollutant)
+                    db_con.execute(sql_emissions_delete)
 
-                else: 
-                    ef = attributes_dict[commodity_name][mode][attr].magnitude #g/ton/mi
-                    sql_em = """ -- {} by mode and commodity
-                                  insert into detailed_emissions
-                                  select
-                                  commodity_name,
-                                  '{}',
-                                  '{}',
-                                  sum(commodity_flow * miles * {}),
-                                  'grams'
-                                  from optimal_route_segments
-                                  where network_source_id = '{}' and commodity_name = '{}'
-                                  group by commodity_name, network_source_id
-                                  ;""".format(attr, mode, attr, ef, mode, commodity_name)
-                    db_con.execute(sql_em)
+            else:
+                for pollutant in attribute_dict[commodity_name][mode]:
+                    if pollutant in ['Load','Fuel_Efficiency']:
+                        continue # skip because not a pollutant
+                    
+                    emissions_val = attribute_dict[commodity_name][mode][pollutant]['general'].magnitude
+                    sql_emissions = """ -- emissions by mode and commodity
+                                insert into detailed_emissions
+                                select
+                                commodity_name,
+                                '{}', --mode
+                                '{}', --pollutant
+                                sum(commodity_flow * length * {}),
+                                'grams'
+                                from optimal_route_segments
+                                where network_source_id = '{}' and commodity_name = '{}' and artificial != 1
+                                group by commodity_name, network_source_id
+                                ;""".format(mode, pollutant, emissions_val, mode, commodity_name)
+                    db_con.execute(sql_emissions)
 
 
+        
 # ===================================================================================================
 
 
@@ -1488,7 +1692,7 @@ def generate_artificial_link_summary(the_scenario, logger):
 
     # query the facility and network tables for artificial links and report out the results
     with sqlite3.connect(the_scenario.main_db) as db_con:
-        sql = """select fac.facility_name, fti.facility_type, ne.mode_source, round(ne.miles, 3) as miles
+        sql = """select fac.facility_name, fti.facility_type, ne.mode_source, round(ne.length, 3) as length
                  from facilities fac
                  left join facility_type_id fti on fac.facility_type_id = fti.facility_type_id
                  left join networkx_nodes nn on fac.location_id = nn.location_id
@@ -1558,20 +1762,20 @@ def db_report_commodity_utilization(the_scenario, logger):
     with sqlite3.connect(the_scenario.main_db) as db_con:
         sql = """select c.commodity_name,
                  fti.facility_type,
-                 io,
-                 IFNULL((select osr.value
-                     from optimal_scenario_results osr
-                     where osr.commodity = c.commodity_name
-                     and osr.measure ='total_flow'
-                     and osr.mode = 'allmodes'),-9999) optimal_flow,
-                     c.units
+                 fc.io,
+                 IFNULL(round((select osr.value
+                               from optimal_scenario_results osr
+                               where osr.commodity = c.commodity_name
+                               and osr.measure = 'total_flow'
+                               and osr.mode = 'allmodes'), 2), "No Flow") as optimal_flow,
+                 fc.units
                  from facility_commodities fc
                  join commodities c on fc.commodity_id = c.commodity_id
                  join facilities f on f.facility_id = fc.facility_id
                  join facility_type_id fti on fti.facility_type_id = f.facility_type_id
                  where f.ignore_facility == 'false'
-                 group by c.commodity_name, fc.io, fti.facility_type, fc.units
-                 order by commodity_name, io desc
+                 group by c.commodity_name, fti.facility_type, fc.io, fc.units
+                 order by c.commodity_name, fc.io asc
                  ;"""
         db_cur = db_con.execute(sql)
 
@@ -1579,12 +1783,13 @@ def db_report_commodity_utilization(the_scenario, logger):
         logger.result("-------------------------------------------------------------------")
         logger.result("Scenario Total Flow of Supply and Demand")
         logger.result("-------------------------------------------------------------------")
-        logger.result("total utilization is defined as (total flow / net available)")
-        logger.result("commodity_name | facility_type | io |  optimal_flow |   units  ")
-        logger.result("---------------|---------------|----|---------------|----------")
+        logger.result("commodity_name | facility_type | io |  optimal_flow |     units     ")
+        logger.result("---------------|---------------|----|---------------|---------------")
         for row in db_data:
-            logger.result("{:15.15} {:15.15} {:4.1} {:15,.1f} {:15.10}".format(row[0], row[1], row[2], row[3],
-                                                                                 row[4]))
+            if (type(row[3]) == str):
+                logger.result("{:15.15} {:15.15} {:4.1} {:15.15} {:15.15}".format(row[0], row[1], row[2], row[3], row[4]))
+            else:
+                logger.result("{:15.15} {:15.15} {:4.1} {:15,.2f} {:15.15}".format(row[0], row[1], row[2], row[3], row[4]))                
         logger.result("-------------------------------------------------------------------")
 
     # This query compares the optimal flow to the net available quantity of material in the scenario.
@@ -1592,43 +1797,46 @@ def db_report_commodity_utilization(the_scenario, logger):
     # determine the potential supply, demand, and processing utilization in the scenario.
     # -----------------------------------
     with sqlite3.connect(the_scenario.main_db) as db_con:
-        sql = """select c.commodity_name,
-                 fti.facility_type,
-                 io,
-                 IFNULL(round((select osr.value
-                     from optimal_scenario_results osr
-                     where osr.commodity = c.commodity_name
-                     and osr.measure ='total_flow'
-                     and osr.mode = 'allmodes') / sum(fc.quantity),2),-9999) Utilization,
-                     'fraction'
+        sql = """select c.commodity_name, fti.facility_type, fc.io,
+                 (CASE WHEN (select osr.value
+                            from optimal_scenario_results osr
+                            where osr.commodity = c.commodity_name and osr.measure = 'total_flow'
+                            and osr.mode = 'allmodes') IS NULL THEN "No Flow"
+					   WHEN sum(CASE WHEN fc.scaled_quantity IS NULL THEN 1 ELSE 0 END) <> 0 THEN "Unconstrained"
+                       ELSE round((select osr.value
+                            from optimal_scenario_results osr
+                            where osr.commodity = c.commodity_name
+                            and osr.measure = 'total_flow'
+                            and osr.mode = 'allmodes') / sum(fc.scaled_quantity), 2) END) as Utilization,
+                 'fraction'
                  from facility_commodities fc
                  join commodities c on fc.commodity_id = c.commodity_id
                  join facilities f on f.facility_id = fc.facility_id
                  join facility_type_id fti on fti.facility_type_id = f.facility_type_id
                  where f.ignore_facility == 'false'
-                 group by c.commodity_name, fc.io, fti.facility_type, fc.units
-                 order by commodity_name, io desc
-                 ;"""
+                 group by c.commodity_name, fti.facility_type, fc.io, fc.units
+                 order by c.commodity_name, fc.io asc;"""
         db_cur = db_con.execute(sql)
 
         db_data = db_cur.fetchall()
         logger.result("-------------------------------------------------------------------")
         logger.result("Scenario Total Utilization of Supply and Demand")
         logger.result("-------------------------------------------------------------------")
-        logger.result("total utilization is defined as (total flow / net available)")
-        logger.result("commodity_name | facility_type | io |  utilization  |   units  ")
-        logger.result("---------------|---------------|----|---------------|----------")
+        logger.result("note: total utilization is defined as (total flow / net available)")
+        logger.result("commodity_name | facility_type | io |  utilization  |     units     ")
+        logger.result("---------------|---------------|----|---------------|---------------")
         for row in db_data:
-            logger.result("{:15.15} {:15.15} {:4.1} {:15,.1f} {:15.10}".format(row[0], row[1], row[2], row[3],
-                                                                               row[4]))
+            if (type(row[3]) == str):
+                logger.result("{:15.15} {:15.15} {:4.1} {:15.15} {:15.15}".format(row[0], row[1], row[2], row[3], row[4]))
+            else:
+                logger.result("{:15.15} {:15.15} {:4.1} {:15,.2f} {:15.15}".format(row[0], row[1], row[2], row[3], row[4]))
         logger.result("-------------------------------------------------------------------")
 
 
 # ===================================================================================================
 
 
-def make_optimal_route_segments_featureclass_from_db(the_scenario,
-                                                     logger):
+def make_optimal_route_segments_featureclass_from_db(the_scenario, logger):
 
     logger.info("starting make_optimal_route_segments_featureclass_from_db")
 
@@ -1640,8 +1848,10 @@ def make_optimal_route_segments_featureclass_from_db(the_scenario,
         arcpy.Delete_management(optimized_route_segments_fc)
         logger.debug("deleted existing {} layer".format(optimized_route_segments_fc))
 
+
+    scenario_proj = ftot_supporting_gis.get_coordinate_system(the_scenario)
     arcpy.CreateFeatureclass_management(the_scenario.main_gdb, "optimized_route_segments", \
-       "POLYLINE", "#", "DISABLED", "DISABLED", ftot_supporting_gis.LCC_PROJ, "#", "0", "0", "0")
+       "POLYLINE", "#", "DISABLED", "DISABLED", scenario_proj, "#", "0", "0", "0")
 
     arcpy.AddField_management(optimized_route_segments_fc, "ROUTE_TYPE", "TEXT", "#", "#", "25", "#", "NULLABLE", "NON_REQUIRED", "#")
     arcpy.AddField_management(optimized_route_segments_fc, "FTOT_RT_ID", "LONG")
@@ -1661,10 +1871,10 @@ def make_optimal_route_segments_featureclass_from_db(the_scenario,
     arcpy.AddField_management(optimized_route_segments_fc, "CAPACITY", "FLOAT")
     arcpy.AddField_management(optimized_route_segments_fc, "CAPACITY_MINUS_VOLUME", "FLOAT")
     arcpy.AddField_management(optimized_route_segments_fc, "UNITS", "TEXT")
-    arcpy.AddField_management(optimized_route_segments_fc, "MILES", "FLOAT")
+    arcpy.AddField_management(optimized_route_segments_fc, "LENGTH", "FLOAT")
     arcpy.AddField_management(optimized_route_segments_fc, "PHASE_OF_MATTER", "TEXT")
     arcpy.AddField_management(optimized_route_segments_fc, "LINK_ROUTING_COST", "FLOAT")
-    arcpy.AddField_management(optimized_route_segments_fc, "LINK_DOLLAR_COST", "FLOAT")
+    arcpy.AddField_management(optimized_route_segments_fc, "LINK_TRANSPORT_COST", "FLOAT")
 
     # get a list of the modes used in the optimal route_segments stored in the db.
     with sqlite3.connect(the_scenario.main_db) as db_con:
@@ -1687,8 +1897,8 @@ def make_optimal_route_segments_featureclass_from_db(the_scenario,
     # ---------------------------------------------------------------------
 
     optimized_route_seg_flds = ("SHAPE@", "FTOT_RT_ID", "FTOT_RT_ID_VARIANT", "ROUTE_TYPE", "NET_SOURCE_NAME",
-     "NET_SOURCE_OID", "FromPosition", "FromJunctionID", "MILES", "TIME_PERIOD", "COMMODITY", "COMMODITY_FLOW",
-     "VOLUME", "CAPACITY", "CAPACITY_MINUS_VOLUME", "UNITS", "PHASE_OF_MATTER", "ARTIFICIAL", "LINK_ROUTING_COST", "LINK_DOLLAR_COST")
+     "NET_SOURCE_OID", "FromPosition", "FromJunctionID", "LENGTH", "TIME_PERIOD", "COMMODITY", "COMMODITY_FLOW",
+     "VOLUME", "CAPACITY", "CAPACITY_MINUS_VOLUME", "UNITS", "PHASE_OF_MATTER", "ARTIFICIAL", "LINK_ROUTING_COST", "LINK_TRANSPORT_COST")
 
     for network_source in mode_source_list:
         if network_source == 'intermodal':
@@ -1714,10 +1924,10 @@ def make_optimal_route_segments_featureclass_from_db(the_scenario,
                  capacity_minus_volume,
                  units,
                  phase_of_matter,
-                 miles,
+                 length,
                  route_type,
                  artificial,
-                 link_dollar_cost,
+                 link_transport_cost,
                  link_routing_cost
                  from optimal_route_segments
                  where network_source_id = '{}'
@@ -1752,17 +1962,17 @@ def make_optimal_route_segments_featureclass_from_db(the_scenario,
             capacity_minus_volume= row[11]
             units               = row[12]
             phase_of_matter     = row[13]
-            miles               = row[14]
+            length              = row[14]
             route_type          = row[15]
             artificial          = row[16]
-            link_dollar_cost    = row[17]
+            link_transport_cost    = row[17]
             link_routing_cost   = row[18]
 
             optimal_route_segments_dict[row[3]].append([route_id, route_id_variant, network_source_id,
                                                         network_object_id, from_position, from_junction_id, time_period,
                                                         commodity, commodity_flow, volume, capacity,
-                                                        capacity_minus_volume, units, phase_of_matter, miles,
-                                                        route_type, artificial, link_dollar_cost, link_routing_cost])
+                                                        capacity_minus_volume, units, phase_of_matter, length,
+                                                        route_type, artificial, link_transport_cost, link_routing_cost])
 
         logger.debug("done building the dict for {}".format(network_source))
 
@@ -1780,13 +1990,13 @@ def make_optimal_route_segments_featureclass_from_db(the_scenario,
                     for segment_info in optimal_route_segments_dict[object_id]:
                         (route_id, route_id_variant, network_source_id, network_object_id, from_position,
                          from_junction_id, time_period, commodity, commodity_flow, volume, capacity, capacity_minus_volume,
-                         units, phase_of_matter, miles, route_type, artificial, link_dollar_cost, link_routing_cost) = segment_info
+                         units, phase_of_matter, length, route_type, artificial, link_transport_cost, link_routing_cost) = segment_info
                         with arcpy.da.InsertCursor(optimized_route_segments_fc, optimized_route_seg_flds) as insert_cursor:
                             insert_cursor.insertRow([geom, route_id, route_id_variant, route_type, network_source_id,
                                                      network_object_id, from_position, from_junction_id,
-                                                     miles, time_period, commodity, commodity_flow, volume, capacity,
+                                                     length, time_period, commodity, commodity_flow, volume, capacity,
                                                      capacity_minus_volume, units, phase_of_matter, artificial,
-                                                     link_routing_cost, link_dollar_cost])
+                                                     link_routing_cost, link_transport_cost])
 
         logger.debug("finish: looping through the {} mode".format(network_source))
         logger.info("mode: {} coverage: {:,.1f} - total links: {} , total links used: {}".format(network_source,
@@ -1796,9 +2006,9 @@ def make_optimal_route_segments_featureclass_from_db(the_scenario,
 # ======================================================================================================================
 
 
-def add_fclass_and_urban_code(the_scenario, logger):
+def add_link_type_and_urban_rural(the_scenario, logger):
 
-    logger.info("starting add_fclass_and_urban_code")
+    logger.info("starting add_link_type_and_urban_rural")
     scenario_gdb = the_scenario.main_gdb
     optimized_route_segments_fc = os.path.join(scenario_gdb, "optimized_route_segments")
 
@@ -1818,23 +2028,24 @@ def add_fclass_and_urban_code(the_scenario, logger):
     # -----------------------------------------------------------
 
     road_fc = os.path.join(scenario_gdb, "network", "road")
-    flds = ("OID@", "FCLASS", "URBAN_CODE")
+    flds = ("OID@", "Link_Type", "Urban_Rural", "Limited_Access")
     with arcpy.da.SearchCursor(road_fc, flds) as search_cursor:
         for row in search_cursor:
             if row[0] in network_source_oid_dict['road']:
-                network_source_oid_dict['road'][row[0]] = [row[1], row[2]]
+                network_source_oid_dict['road'][row[0]] = [row[1], row[2], row[3]]
 
     # add fields to hold data from network links
     # ------------------------------------------
 
     # FROM ROAD NET ONLY
-    arcpy.AddField_management(optimized_route_segments_fc, "ROAD_FCLASS", "SHORT")
-    arcpy.AddField_management(optimized_route_segments_fc, "URBAN_CODE", "LONG")
+    arcpy.AddField_management(optimized_route_segments_fc, "Link_Type", "Text")
+    arcpy.AddField_management(optimized_route_segments_fc, "Urban_Rural", "Short")
+    arcpy.AddField_management(optimized_route_segments_fc, "Limited_Access", "Short")
 
     # set network link related values in optimized_route_segments layer
     # -----------------------------------------------------------------
 
-    flds = ["NET_SOURCE_NAME", "NET_SOURCE_OID", "ROAD_FCLASS", "URBAN_CODE"]
+    flds = ["NET_SOURCE_NAME", "NET_SOURCE_OID", "Link_Type", "Urban_Rural", "Limited_Access"]
 
     # initialize a list for the update
 
@@ -1850,15 +2061,16 @@ def add_fclass_and_urban_code(the_scenario, logger):
 
             if net_source == 'road':
                 data = network_source_oid_dict[net_source][net_oid]
-                row[2] = data[0]  # fclass
-                row[3] = data[1]  # urban_code
+                row[2] = data[0]  # link_type
+                row[3] = data[1]  # urban_rural
+                row[4] = data[2]  # limited_access                
 
                 update_cursor.updateRow(row)
 
-                # Just adding the fclass and urban_rural_code to the list once per net_source_oid
+                # Just adding the link_type urban_rural and limited_access to the list once per net_source_oid
                 if net_oid not in net_oid_seen:
                     net_oid_seen[net_oid] = 0
-                    update_list.append([row[2], row[3], net_source, net_oid])
+                    update_list.append([row[2], row[3], row[4], net_source, net_oid])
                 net_oid_seen[net_oid] += 1
 
     logger.info("starting the execute many to update the list of optimal_route_segments")
@@ -1866,7 +2078,7 @@ def add_fclass_and_urban_code(the_scenario, logger):
         db_con.execute("CREATE INDEX if not exists network_index ON optimal_route_segments(network_source_id, network_source_oid, commodity_name, artificial)")
         update_sql = """
             UPDATE optimal_route_segments
-            set fclass = ?, urban_rural_code = ?
+            set link_type = ?, urban_rural = ?, limited_access = ?
             where network_source_id = ? and network_source_oid = ?
             ;"""
 
@@ -1910,7 +2122,7 @@ def dissolve_optimal_route_segments_feature_class_for_mapping(the_scenario, logg
                                   ["NET_SOURCE_NAME", "NET_SOURCE_OID", "ARTIFICIAL", "PHASE_OF_MATTER", "UNITS"],
                                   [['COMMODITY_FLOW', 'SUM']], "SINGLE_PART", "DISSOLVE_LINES")
 
-        if arcpy.CheckProduct("ArcInfo") == "Available":
+        if arcpy.ProductInfo() == "ArcInfo":
             # Second dissolve needed to accurately show aggregate pipeline flows
             arcpy.FeatureToLine_management("optimized_route_segments_dissolved_tmp",
                                            "optimized_route_segments_split_tmp")
@@ -1931,12 +2143,13 @@ def dissolve_optimal_route_segments_feature_class_for_mapping(the_scenario, logg
 
         else:
             # Doing it differently because feature to line isn't available without an advanced license
-            logger.warning("The Advanced/ArcInfo license level of ArcGIS is not available. A modification to the "
-                           "dissolve_optimal_route_segments_feature_class_for_mapping method is necessary")
+            logger.warning("The Advanced/ArcInfo license level of ArcGIS Pro is not available. A modification to the "
+                           "dissolve_optimal_route_segments_feature_class_for_mapping method is being automatically run.")
 
+            scenario_proj = ftot_supporting_gis.get_coordinate_system(the_scenario)
             # Create the fc
             arcpy.CreateFeatureclass_management(the_scenario.main_gdb, "optimized_route_segments_split_tmp",
-                                                "POLYLINE", "#", "DISABLED", "DISABLED", ftot_supporting_gis.LCC_PROJ)
+                                                "POLYLINE", "#", "DISABLED", "DISABLED", scenario_proj)
 
             arcpy.AddField_management("optimized_route_segments_split_tmp", "NET_SOURCE_NAME", "TEXT")
             arcpy.AddField_management("optimized_route_segments_split_tmp", "NET_SOURCE_OID", "LONG")
@@ -2016,8 +2229,9 @@ def dissolve_optimal_route_segments_feature_class_for_mapping(the_scenario, logg
         arcpy.Delete_management("optimized_route_segments_dissolved_tmp2")
 
     else:
+        scenario_proj = ftot_supporting_gis.get_coordinate_system(the_scenario)
         arcpy.CreateFeatureclass_management(the_scenario.main_gdb, "optimized_route_segments_dissolved",
-                                            "POLYLINE", "#", "DISABLED", "DISABLED", ftot_supporting_gis.LCC_PROJ, "#",
+                                            "POLYLINE", "#", "DISABLED", "DISABLED", scenario_proj, "#",
                                             "0", "0", "0")
 
         arcpy.AddField_management("optimized_route_segments_dissolved", "NET_SOURCE_NAME", "TEXT")
