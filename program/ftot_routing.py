@@ -1017,7 +1017,8 @@ def minimum_bounding_geometry(the_scenario, logger):
     arcpy.MinimumBoundingGeometry_management("Locations", "Locations_MBG", "CONVEX_HULL")
 
     # Buffer the minimum bounding geometry of the scenario
-    arcpy.Buffer_analysis("Locations_MBG", "Locations_MBG_Buffered", "100 Miles", "FULL", "ROUND", "NONE", "",
+    # <<>> For Resilience Link Removal too, this buffer has been reduced to 50 from 100 mi for greater specificity <<>>
+    arcpy.Buffer_analysis("Locations_MBG", "Locations_MBG_Buffered", "50 Miles", "FULL", "ROUND", "NONE", "",
                           "GEODESIC")
 
     # Select the roads within the buffer

@@ -56,7 +56,8 @@ def graph(the_scenario, logger):
 
 
 def delete_shape_files(the_scenario, logger):
-    # delete temporary files
+    # Normal FTOT operations delete temporary files
+    # <<>> For Resilience Link Removal Tool, we will keep all the shapefiles, as these are needed for link removal <<>>
     # logger.debug("start: delete the temp_networkx_shp_files dir")
     # input_path = the_scenario.networkx_files_dir
     # rmtree(input_path)
@@ -1824,4 +1825,5 @@ def edges_from_line(geom, attrs, simplify=True, geom_attrs=True):
     elif geom.GetGeometryType() == ogr.wkbMultiLineString:
         for i in range(geom.GetGeometryCount()):
             geom_i = geom.GetGeometryRef(i)
-            for edge in edges_from_line(geom_i, att
+            for edge in edges_from_line(geom_i, attrs, simplify, geom_attrs):
+                yield edge
