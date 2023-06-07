@@ -72,7 +72,7 @@ If the Jupyter Notebook instance launches with a warning about the kernel, you m
 
 ## Run Reference Scenario 1
 
-Run Reference Scenario 1 using the modified FTOT code. Browse to `C:\FTOT\scenarios\reference_scenarios\rs1_multi_commodity_supply_chain` and double-click `run_v6_1.bat`.
+Run Reference Scenario 1 using the modified FTOT code. Browse to `C:\FTOT\scenarios\reference_scenarios\rs1_multi_commodity_supply_chain` and double-click `run_v7.bat`.
 
 ## Conduct link removal disruptions
 
