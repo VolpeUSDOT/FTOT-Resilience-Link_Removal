@@ -1,5 +1,26 @@
 # FTOT Change Log
 
+## v2023_1
+
+The FTOT 2023.1 public release includes a major update with the creation of a general network specification that enables users to run FTOT with a custom multimodal network. This is a breaking change; users will need to update their supplementary data and scenario files (e.g., scenario XML file) in order to use FTOT 2023.1. This release also includes updates related to candidate generation using network density reduction (NDR), commodity-specific minimum and maximum processing capacities, first mile/last mile costs, and minor Tableau enhancements and bug fixes. The following changes have been made:
+* Creates an FTOT general network specification schema for each component of the FTOT multimodal network (road, rail, water, locks, pipeline, multimodal facilities). Generalizes FTOT codebase to align with any transportation network that follows the schema.
+* Updates FTOT’s default multimodal network to the general network specification. The new default network is named “FTOT_Public_US_Contiguous_Network_v2023.gdb” and is located with the supplementary data and scenarios download. For users bringing custom networks to FTOT, see Section 2.2 in the FTOT User Guide for network schema requirements and Appendix B in FTOT’s technical documentation for the full network specification schema.
+* Updates the XML schema to version 7 to align with the new network specification. To run FTOT 2023.1, users must update any pre-existing scenario XML files to this new version. Changes include:
+  * New elements for default distance and currency units
+  *	Relocation of network impedance weights to a new impedance weights CSV file
+  * Relocation of CO2 emission factors by specific road type to the detailed emission factors CSV
+  *	Switch from currency-based short haul penalties to distance-based penalties
+  *	Updated XML template and corresponding updates to quick start and reference scenario XMLs
+*	Enables commodity-specific processor capacities through optional “min_capacity” and “max_capacity” columns in the processor CSV file. Users can still apply facility_level capacity by including a row in the CSV file with “total” as the commodity; input or output must be specified in the “io” column for the “total” row.  “Max_processor_input” and “min_processor_input” columns are still supported and interpreted as a “total” input row. This change resolves a bug where  commodities were being erroneously combined across different units when checking processor capacity.
+*	Resolves issues with network density reduction (NDR) for candidate processor generation in scenarios with large max transport distances or with a commodity mode CSV file.
+*	Resolves a bug in the creation of processor flow constraints where an incorrect input/output ratio was being calculated for processors with multiple input commodities and different required quantities.
+*	Updates transport cost and routing cost on artificial links for all modes to reflect the first mile/last mile costs of traveling by local roads to/from facilities.
+*	Generalizes metric names in the reports and Tableau workbook to accommodate user-specified distance and currency units. Renamed metrics include transport cost (formerly dollar cost), network used (formerly miles), and vehicle-distance traveled (former vehicle-miles traveled).
+*	Corrects minor bugs in (1) assigning urban/rural code and limited/nonlimited access information to road edges split by artificial links, (2) removing links in the optimization problem incorrectly coded as bidirectional that should be one-direction only, (3) minimizing offset of facility locations (raw material producers, processors, destinations) on the network, and (4) running NDR scenarios with the pipeline network.
+*	Releases the “Customizing Scenarios” instruction video. All video tutorials are posted to the FTOT landing page.
+
+See documentation files for additional details.
+
 ## v2022_2
 The FTOT 2022.2 public release includes significant restructuring of user documentation and adds a landing page for the GitHub repository. There are four new documentation files:  
 - Technical documentation - description of how FTOT works, underlying data and assumptions, and FTOT structures and functions.  
@@ -10,7 +31,7 @@ The FTOT 2022.2 public release includes significant restructuring of user docume
 The 2022.2 release also updates FTOT reporting, adds user-specified minimum processor capacity, and corrects facility summary post-processing to account for multi-commodity inputs. The following changes have been made:
 - Reorganized text report and added a scenario summary section, clarified names of summary metrics, and added processor build costs.
 - Added option for user-specified minimum processor capacity in processor facility-commodity input file. Minimum capacity can be specified in an optional column; if not specified, minimum capacity defaults to 1/2 of maximum processor capacity.
-- Updated Tableau workbook with new reporting elements, bug fixes, and other enhancements. 
+- Updated Tableau workbook with new reporting elements, bug fixes, and other enhancements.
 - Fixed bug related to incorporating OC step logging into reports.
 - Corrected calculation of commodity flow and facility utilization for facilities with multi-commodity inputs.
 
@@ -66,12 +87,12 @@ The 2021.1 release finalizes the transition to Python 3, migrating from a depend
 
 ## v2020_4_1
 The 2020.4.1 service pack release adds the ability to turn the network presolve step included in the
-2020.4 release on or off through an optional network density reduction (NDR) function. The functionality 
-is controlled by the NDR_On parameter in the scenario configuration file; the default is for the step 
-to be disabled. Including the parameter in the scenario configuration file and setting it to True enables 
-the network presolve step described below in v2020_4. An exercise has been added to Quick Start 6 to 
-demonstrate the functionality and use cases of the NDR function. Additionally, the service pack release 
-includes improvements to the shortest path algorithm used by the network presolve step. Finally, small 
+2020.4 release on or off through an optional network density reduction (NDR) function. The functionality
+is controlled by the NDR_On parameter in the scenario configuration file; the default is for the step
+to be disabled. Including the parameter in the scenario configuration file and setting it to True enables
+the network presolve step described below in v2020_4. An exercise has been added to Quick Start 6 to
+demonstrate the functionality and use cases of the NDR function. Additionally, the service pack release
+includes improvements to the shortest path algorithm used by the network presolve step. Finally, small
 fixes to handle unit conversion were made.
 
 ## v2020_4
@@ -109,7 +130,7 @@ MAPS
 - No changes to report in 2020.4
 
 ## v2020_3
-The 2020.3 release includes a new setup script for installing FTOT and additional software dependencies, performance enhancements to reduce the memory footprint of scenarios at run time, and several miscellaneous fixes to improve the quality of the code base. 
+The 2020.3 release includes a new setup script for installing FTOT and additional software dependencies, performance enhancements to reduce the memory footprint of scenarios at run time, and several miscellaneous fixes to improve the quality of the code base.
 
 GENERAL
 - Added ArcGIS 10.8 and 10.8.1 to the list of compatible versions in ftot.py
@@ -121,18 +142,18 @@ GENERAL
 - Deletes the temporary networkx shape file directory from at the end of the G step.
 - Renamed the post_optimization_64_bit() method  
 
-PULP MODULE 
-- Added schedule functionality at the facility level, and Quick Start 2 Exercise 4 for as example for how to use the new schedule feature. 
+PULP MODULE
+- Added schedule functionality at the facility level, and Quick Start 2 Exercise 4 for as example for how to use the new schedule feature.
 
 TABLEAU DASHBOARDS
 - Added units to tooltips throughout
 - Changed color scheme for commodity and scenario name symbols
 - Changed the alias of _MAP SYBOLOGY CALC to “Symbol By”
-- Fixed bug where the story would open up empty because the scenario name filters were not selected. 
-- Fixed bug where the summary results by scenario name did not inherit the scenario name color scheme. 
+- Fixed bug where the story would open up empty because the scenario name filters were not selected.
+- Fixed bug where the summary results by scenario name did not inherit the scenario name color scheme.
 - Updated dashboard sizes to support non-1080p resolutions (e.g. 4k)
 - Added absolute, percent difference, and difference views for the Summary graphics.
-- Facilities map now includes the optimal and non-optimal facility filters. 
+- Facilities map now includes the optimal and non-optimal facility filters.
 
 MAPS
 - No changes to report in 2020.3
@@ -152,42 +173,42 @@ PULP MODULE REFACTORING
     - create_constraint_max_route_capacity
 - Removed calls to serialize the optimization problem with pickle before the call to prob.solve().
 - Removed extra logger.debug messages from O1 and O2 steps.
-- Removed redundant calls in pre_setup_pulp() to generate_first_edges_from_source_facilities and generate_all_edges_from_source_facilities in ftot_pulp.py 
+- Removed redundant calls in pre_setup_pulp() to generate_first_edges_from_source_facilities and generate_all_edges_from_source_facilities in ftot_pulp.py
 
 TABLEAU DASHBOARDS
--	Created Tableau Story to step through scenario dashboards. 
+-	Created Tableau Story to step through scenario dashboards.
 - Added legend options to color routes by scenario name or commodity in comparison dashboards.
 - Added fuel burn to scenario results.
 - Added high-level scenario comparison summary.
 
 MAPS
-- No changes to report in 2020.2 
+- No changes to report in 2020.2
 
 GENERAL
-- Removed check for ArcGIS Network_analyst extension in ftot.py 
+- Removed check for ArcGIS Network_analyst extension in ftot.py
 - Updated installation instructions to specify version number for dependencies: pulp v.1.6.10, and imageio v.2.6
 - Fixed input validation bug for candidate facilities that crashed at runtime.
-- Fixed Divide By Zero bug in Minimum Bounding Geometry step when road network is empty. 
+- Fixed Divide By Zero bug in Minimum Bounding Geometry step when road network is empty.
 - Added FTOT Tool to batch update configuration parameters recursively in scenario.xml files
 
 ## v2020_1
 TABLEAU DASHBOARDS
 - New Scenario Compare Workbook for comparing multiple FTOT scenarios in one Tableau workbook.
-- Scenario Compare utility updated in FTOT Tools.py - now concatenates multiple scenarios and creates a new packaged Tableau workbook. 
+- Scenario Compare utility updated in FTOT Tools.py - now concatenates multiple scenarios and creates a new packaged Tableau workbook.
 - Cost and volume numbers buffered to prevent overlap with mode graphics
-- Facilities map tool tips no longer display metadata. 
+- Facilities map tool tips no longer display metadata.
 - Changes the config output from the S step (first one) to O2 step.
 - Pipeline symbology fixes
 - Runtimes now reported in the tableau report
 
 MAPS
-- Basemap capability added 
-- Custom user created map capability added 
+- Basemap capability added
+- Custom user created map capability added
 - Extent functionality for maps changed
 - Maps that show aggregate flows have been deprecated and removed
 - Some map names have changed. In particular, the basemap name has been added to each of the maps. The numbering of a few maps was also changed and two had their titles shortened (e.g. raw_material_producer became rmp) for consistency with other maps.
 
-GENERAL 
+GENERAL
 - Documentation updated to reflect the rail and water short-haul penalty.
 - Documentation updated and Quick Start Scenarios created to demonstrate pipeline movements with the commodity_mode.csv
 - Fixed hundredweight units typo in the python module used to track and convert units, Pint.
