@@ -96,7 +96,7 @@ def disrupt_network(disrupt_type, disrupt_steps, scen_path, edges_remove, disrup
 
         # identify specific element path
         # only runs until a valid path is found for one file
-        element_path = "{Schema_v6.0.0}Scenario_Name"
+        element_path = "{Schema_v7.0.0}Scenario_Name"
 
         target_elem = xml_etree.find(element_path)
         target_elem.text = disrupt_name
