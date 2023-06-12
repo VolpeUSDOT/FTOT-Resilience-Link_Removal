@@ -261,8 +261,8 @@ def evenness_metrics(dbname, use_mode = 'road'):
 
     # Length
 
-    sum_weight = edges['miles'].sum()
-    props = edges['miles'] / sum_weight
+    sum_weight = edges['length'].sum()
+    props = edges['length'] / sum_weight
     Hprime = -1 * np.nansum(np.log(props).multiply(props))
     Evenness_dist = Hprime / Hmax
 
