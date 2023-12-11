@@ -152,6 +152,11 @@ def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT):
         cmd = PYTHON + ' ' + FTOT + ' ' + XMLSCENARIO + ' d'
         os.system(cmd)
 
+        print('Running m for ' + disrupt_name)
+
+        cmd = PYTHON + ' ' + FTOT + ' ' + XMLSCENARIO + ' m'
+        os.system(cmd)
+        
         # Get values out of the o2 step log
         log_path = os.path.join(disrupt_scen_path, 'logs')
 

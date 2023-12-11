@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
-
-
+    
 def render(base_scen):
     """
     Compile RMarkdown report of scenario results
@@ -14,11 +13,13 @@ def render(base_scen):
     import shutil
     import webbrowser
     import os
+    
 
-    subprocess.Popen(['Rscript.exe', 'compile_report.R', base_scen],
+
+    subprocess.Popen([file.path(R.home('bin'),'Rscript.exe'), 'compile_report.R', base_scen],
                      stdout = subprocess.PIPE, stderr = subprocess.PIPE)
                                  
     here = os.getcwd()
-
+    
     webbrowser.open('file://' + os.path.realpath(os.path.join(here, 'Disruption_Results.html')))
 

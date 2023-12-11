@@ -9,7 +9,7 @@ output:
       collapsed: true
       smooth_scroll: false
 params:
-  base_scen: 'C:/FTOT/scenarios/reference_scenarios/rs1_multi_commodity_supply_chain'
+  base_scen: 'C:\FTOT\scenarios\quick_start\qs2_rmp_proc_dest'
 ---
 
 <!-- Add the following line manually to the rendered HTML document so that IE does not block the javascript elements: -->
@@ -26,7 +26,6 @@ library(plotly)
 library(knitr)
 
 scen_name = strsplit(basename(params$base_scen), '_')[[1]][1]
-
 ```
 
 # Plotting the disruption scenarios
@@ -112,7 +111,7 @@ datatable(e_j  %>% filter(!is.na(BC_rank) | !is.na(V_rank)) %>%
             select(BC_rank,
                    V_rank,
                    edge_id,
-                   miles,
+                   length,
                    capacity,
                    volume,
                    sum_BC,
