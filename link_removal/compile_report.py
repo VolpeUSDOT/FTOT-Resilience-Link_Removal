@@ -14,8 +14,6 @@ def render(base_scen):
     import webbrowser
     import os
     
-
-
     subprocess.Popen([file.path(R.home('bin'),'Rscript.exe'), 'compile_report.R', base_scen],
                      stdout = subprocess.PIPE, stderr = subprocess.PIPE)
                                  

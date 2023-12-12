@@ -70,9 +70,9 @@ You only need to create the environment once; thereafter, you can simply run `co
 
 If the Jupyter Notebook instance launches with a warning about the kernel, you may need to manually select `FTOTnetworkEnv` as the kernel to use. If the `FTOTnetworkEnv` kernel fails to load, follow [these steps](https://stackoverflow.com/questions/54876404/unable-to-import-sqlite3-using-anaconda-python) to ensure all supporting files are present.
 
-## Run Quick Start 2
+## Run Reference Scenario 7
 
-Run Quick Start 2 using the modified FTOT code. Browse to `C:\FTOT\scenarios\quick_start\qs2_rmp_proc_dest` and double-click `run_v7.bat`.
+Run Reference Scenario 7 using the modified FTOT code. Browse to `C:\FTOT\scenarios\reference_scenarios\rs7_capacity` and double-click `run_v7.bat`.
 
 ## Conduct link removal disruptions
 
