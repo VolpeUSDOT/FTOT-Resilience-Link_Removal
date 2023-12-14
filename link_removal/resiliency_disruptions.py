@@ -74,7 +74,7 @@ def disrupt_network(disrupt_type, disrupt_steps, scen_path, edges_remove, disrup
         # sort by the selected column, BC or V
         edges_remove = edges_remove.sort_values(by = edge_col, ascending = disrupt_order_ascending)
 
-        remove_edges_list = edges_remove['edge_id'].loci[:step + 1].to_list()
+        remove_edges_list = edges_remove['edge_id'].iloc[:step + 1].to_list()
         remove_edges_list = str(remove_edges_list).replace('[', '(').replace(']', ')')
 
         # Setting capacity to 0 would work, but would need to change Capacity_On to True in the scenario.xml
