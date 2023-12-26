@@ -15,15 +15,21 @@ params:
 <!-- Add the following line manually to the rendered HTML document so that IE does not block the javascript elements: -->
 <!-- saved from url=(0014)about:internet --> 
 
-```{r setup, include=FALSE, warning=F, message=F}
-knitr::opts_chunk$set(echo = F, message = F, warning = F)
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+options(warn = -1) # Suppress warnings
 
-library(ggplot2)
-library(dplyr)
-library(tidyr)
-library(DT)
-library(plotly)
-library(knitr)
+use_lib <- ifelse(any(grepl("FTOTnetworkEnv", .libPaths())),
+  .libPaths()[grepl("FTOTnetworkEnv", .libPaths())],
+  .libPaths()
+)
+
+suppressPackageStartupMessages(library(ggplot2, lib.loc = use_lib))
+suppressPackageStartupMessages(library(dplyr, lib.loc = use_lib))
+suppressPackageStartupMessages(library(tidyr, lib.loc = use_lib))
+suppressPackageStartupMessages(library(DT, lib.loc = use_lib))
+suppressPackageStartupMessages(library(plotly, lib.loc = use_lib))
+suppressPackageStartupMessages(library(knitr, lib.loc = use_lib))
 
 scen_name = strsplit(basename(params$base_scen), '_')[[1]][1]
 ```
@@ -47,24 +53,22 @@ g1 <- ggplot(res, aes(x = disrupt_step,
   geom_step(size = 2, color = 'grey80') +
   geom_point(size = 2, aes(color = nedge)) +
   theme_bw() +
-  ggtitle(paste('Betweeness centrality disruption scenario:', scen_name))
+  ggtitle(paste('Betweenness centrality disruption scenario:', scen_name))
 
 ggsave(plot = g1, filename = paste0(scen_name, '_BC_Disruption_Cost.jpg'))
-
 
 ggplotly(g1)
 
 ```
 
-## Relationship of betweeness centrality and volume
+## Relationship of betweenness centrality and volume
 
 Using the edges in the optimal solution.
 
 Both panels show the relationship between betweenness centrality and background commodity volume flow for the links used in the optimal solution for this scenario.
 
-The left panel colors in the points by the rank in terms of volume. The top links (used for the disruption test) are colored in.
-The right panel colors int the points by the rank in terms of sum of between centrality.
-
+The left panel colors in the points by the rank in terms of volume. The top links are colored in.
+The right panel colors in the points by the rank in terms of sum of betweenness centrality. The top links (used for the disruption test) are colored in.
 
 ```{r bc_vol, fig.width=10}
 edges <- read.csv(file.path(params$base_scen, 'Edges_to_Remove.csv'))
@@ -83,13 +87,13 @@ g2_v <- ggplot(e_j, aes(x = volume,
                       y = sum_BC)) +
   geom_point(aes(color = V_rank), size = 3) +
   theme_bw() +
-  ggtitle('Betweeness centrality sum and Volume of edges \n in optimal scenario solution')
+  ggtitle('Betweenness centrality sum and Volume of edges \n in optimal scenario solution')
 
 g2_bc <- ggplot(e_j, aes(x = volume, 
                       y = sum_BC)) +
   geom_point(aes(color = BC_rank), size = 3) +
   theme_bw() #+
-  #ggtitle('Betweeness centrality sum and Volume of edges in optimal scenario solution')
+  #ggtitle('Betweenness centrality sum and Volume of edges in optimal scenario solution')
 
 egg::ggarrange(g2_v, g2_bc, ncol = 2)
 
@@ -116,7 +120,7 @@ datatable(e_j  %>% filter(!is.na(BC_rank) | !is.na(V_rank)) %>%
                    volume,
                    sum_BC,
                    mode_oid),
-          caption = paste("Road segements (edges) disrupted in", scen_name),
+          caption = paste("Road segments (edges) disrupted in", scen_name),
           rownames = F,
           filter = 'top',
           options = list(dom = "ftp",

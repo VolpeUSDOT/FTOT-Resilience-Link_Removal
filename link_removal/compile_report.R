@@ -1,5 +1,7 @@
 # Wrapper to render Disruption_Results.Rmd
 
+options(warn = -1)
+
 source('Rutil.R')
 
 library(rmarkdown)
@@ -12,5 +14,3 @@ render('Disruption_Results.Rmd',
        params = list(
          base_scen = base_scen)
        )
-
-
