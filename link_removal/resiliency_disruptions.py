@@ -74,7 +74,7 @@ def disrupt_network(disrupt_type, disrupt_steps, scen_path, edges_remove, disrup
         # sort by the selected column, BC or V
         edges_remove = edges_remove.sort_values(by = edge_col, ascending = disrupt_order_ascending)
 
-        remove_edges_list = edges_remove['edge_id'].loc[:step + 1].to_list()
+        remove_edges_list = edges_remove['edge_id'].iloc[:step + 1].to_list()
         remove_edges_list = str(remove_edges_list).replace('[', '(').replace(']', ')')
 
         # Setting capacity to 0 would work, but would need to change Capacity_On to True in the scenario.xml
@@ -152,6 +152,11 @@ def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT):
         cmd = PYTHON + ' ' + FTOT + ' ' + XMLSCENARIO + ' d'
         os.system(cmd)
 
+        print('Running m for ' + disrupt_name)
+
+        cmd = PYTHON + ' ' + FTOT + ' ' + XMLSCENARIO + ' m'
+        os.system(cmd)
+        
         # Get values out of the o2 step log
         log_path = os.path.join(disrupt_scen_path, 'logs')
 
@@ -211,7 +216,7 @@ def evenness_metrics(dbname, use_mode = 'road'):
 
     dbname should be the full path to the FTOT database, main.db
     use_mode should be what part of the transportation network to use. Currently just one string, can flex to a list
-    For example: dbname= C:\FTOT\scenarios\quick_start\qs7_rmp_proc_dest_multi_inputs\main.db
+    For example: dbname= C:\FTOT\scenarios\reference_scenarios\rs7_capacity\main.db
     It will read from the `edges` table of that database.
     """
     import os

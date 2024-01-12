@@ -6,7 +6,7 @@ See the [FTOT homepage](https://volpeusdot.github.io/FTOT-Public) for general in
 
 This tool runs disruptions of an optimal solution, using a network property known as betweenness centrality, or by using the volume of vehicles on roadway links. The tool assesses how resilient an optimal solution is to the removal of key links in the network.
 
-This tool is compatible and has been tested with FTOT version [2023.1](https://github.com/VolpeUSDOT/FTOT-Public/releases/tag/2023.1).
+This tool is compatible and has been tested with FTOT version [2023.1](https://github.com/VolpeUSDOT/FTOT-Public/releases/tag/2023.1). This tool is compatible only with FTOT scenarios in which Network Density Reduction (NDR) is off. To confirm NDR is off, check the the NDR_On element in the scenario XML file is set to False.
 
 #### Requirements
 
@@ -70,9 +70,9 @@ You only need to create the environment once; thereafter, you can simply run `co
 
 If the Jupyter Notebook instance launches with a warning about the kernel, you may need to manually select `FTOTnetworkEnv` as the kernel to use. If the `FTOTnetworkEnv` kernel fails to load, follow [these steps](https://stackoverflow.com/questions/54876404/unable-to-import-sqlite3-using-anaconda-python) to ensure all supporting files are present.
 
-## Run Reference Scenario 1
+## Run Reference Scenario 7
 
-Run Reference Scenario 1 using the modified FTOT code. Browse to `C:\FTOT\scenarios\reference_scenarios\rs1_multi_commodity_supply_chain` and double-click `run_v7.bat`.
+Run Reference Scenario 7 using the modified FTOT code. Browse to `C:\FTOT\scenarios\reference_scenarios\rs7_capacity` and double-click `run_v7.bat`.
 
 ## Conduct link removal disruptions
 
