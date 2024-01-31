@@ -114,276 +114,6 @@ def generate_schedules(the_scenario, logger):
 
     return schedule_dict, last_day
 
-
-def make_vehicle_type_dict(the_scenario, logger):
-
-    # check for vehicle type file
-    ftot_program_directory = os.path.dirname(os.path.realpath(__file__))
-    vehicle_types_path = os.path.join(ftot_program_directory, "lib", "vehicle_types.csv")
-    if not os.path.exists(vehicle_types_path):
-        logger.warning("warning: cannot find vehicle_types file: {}".format(vehicle_types_path))
-        return {}  # return empty dict
-
-    # initialize vehicle property dict and read through vehicle_types CSV
-    vehicle_dict = {}
-    with open(vehicle_types_path, 'r') as vt:
-        line_num = 1
-        for line in vt:
-            if line_num == 1:
-                pass  # do nothing
-            else:
-                flds = line.rstrip('\n').split(',')
-                vehicle_label = flds[0]
-                mode = flds[1].lower()
-                vehicle_property = flds[2]
-                property_value = flds[3]
-
-                # validate entries
-                assert vehicle_label not in ['Default', 'NA'], "Vehicle label: {} is a protected word. Please rename the vehicle.".format(vehicle_label)
-
-                assert mode in ['road', 'water', 'rail'], "Mode: {} is not supported. Please specify road, water, or rail.".format(mode)
-
-                assert vehicle_property in ['Truck_Load_Solid', 'Railcar_Load_Solid', 'Barge_Load_Solid', 'Truck_Load_Liquid',
-                                            'Railcar_Load_Liquid', 'Barge_Load_Liquid', 'Pipeline_Crude_Load_Liquid', 'Pipeline_Prod_Load_Liquid',
-                                            'Truck_Fuel_Efficiency', 'Road_CO2_Emissions', 'Barge_Fuel_Efficiency',
-                                            'Barge_CO2_Emissions', 'Rail_Fuel_Efficiency', 'Railroad_CO2_Emissions'], \
-                                                "Vehicle property: {} is not recognized. Refer to scenario.xml for supported property labels.".format(vehicle_property)
-
-                # convert units
-                # Pint throws an exception if units are invalid
-                if vehicle_property in ['Truck_Load_Solid', 'Railcar_Load_Solid', 'Barge_Load_Solid']:
-                    # convert csv value into default solid units
-                    property_value = Q_(property_value).to(the_scenario.default_units_solid_phase)
-                elif vehicle_property in ['Truck_Load_Liquid', 'Railcar_Load_Liquid', 'Barge_Load_Liquid', 'Pipeline_Crude_Load_Liquid', 'Pipeline_Prod_Load_Liquid']:
-                    # convert csv value into default liquid units
-                    property_value = Q_(property_value).to(the_scenario.default_units_liquid_phase)
-                elif vehicle_property in ['Truck_Fuel_Efficiency', 'Barge_Fuel_Efficiency', 'Rail_Fuel_Efficiency']:
-                     # convert csv value into distance units per gallon
-                    property_value = Q_(property_value).to('{}/gal'.format(the_scenario.default_units_distance))
-                elif vehicle_property in ['Road_CO2_Emissions']:
-                     # convert csv value into grams per distance unit
-                    property_value = Q_(property_value).to('g/{}'.format(the_scenario.default_units_distance))
-                elif vehicle_property in ['Barge_CO2_Emissions', 'Railroad_CO2_Emissions']:
-                     # convert csv value into grams per default mass unit per distance unit
-                    property_value = Q_(property_value).to('g/{}/{}'.format(the_scenario.default_units_solid_phase, the_scenario.default_units_distance))
-                else:
-                    pass # do nothing
-
-                # populate dictionary
-                if mode not in vehicle_dict:
-                    # create entry for new mode type
-                    vehicle_dict[mode] = {}
-                if vehicle_label not in vehicle_dict[mode]:
-                    # create new vehicle key and add property
-                    vehicle_dict[mode][vehicle_label] = {vehicle_property: property_value}
-                else:
-                    # add property to existing vehicle
-                    if vehicle_property in vehicle_dict[mode][vehicle_label].keys():
-                        logger.warning('Property: {} already exists for Vehicle: {}. Overwriting with value: {}'.\
-                                       format(vehicle_property, vehicle_label, property_value))
-                    vehicle_dict[mode][vehicle_label][vehicle_property] = property_value
-
-            line_num += 1
-
-    # ensure all properties are included
-    for mode in vehicle_dict:
-        if mode == 'road':
-            properties = ['Truck_Load_Solid', 'Truck_Load_Liquid', 'Truck_Fuel_Efficiency', 'Road_CO2_Emissions']
-        elif mode == 'water':
-            properties = ['Barge_Load_Solid', 'Barge_Load_Liquid', 'Barge_Fuel_Efficiency', 'Barge_CO2_Emissions']
-        elif mode == 'rail':
-            properties = ['Railcar_Load_Solid', 'Railcar_Load_Liquid', 'Rail_Fuel_Efficiency', 'Railroad_CO2_Emissions']
-        for vehicle_label in vehicle_dict[mode]:
-            for required_property in properties:
-                assert required_property in vehicle_dict[mode][vehicle_label].keys(), "Property: {} missing from Vehicle: {}".format(required_property, vehicle_label)
-
-    return vehicle_dict
-
-
-def vehicle_type_setup(the_scenario, logger):
-
-    logger.info("START: vehicle_type_setup")
-
-    with sqlite3.connect(the_scenario.main_db) as main_db_con:
-
-        main_db_con.executescript("""
-            drop table if exists vehicle_types;
-            create table vehicle_types(
-            mode text,
-            vehicle_label text,
-            property_name text,
-            property_value text,
-            CONSTRAINT unique_vehicle_and_property UNIQUE(mode, vehicle_label, property_name))
-            ;""")
-
-        vehicle_dict = make_vehicle_type_dict(the_scenario, logger)
-        for mode in vehicle_dict:
-            for vehicle_label in vehicle_dict[mode]:
-                for vehicle_property in vehicle_dict[mode][vehicle_label]:
-
-                    property_value = vehicle_dict[mode][vehicle_label][vehicle_property]
-
-                    main_db_con.execute("""
-                        insert or ignore into vehicle_types
-                        (mode, vehicle_label, property_name, property_value) 
-                        VALUES 
-                        ('{}','{}','{}','{}')
-                        ;
-                        """.format(mode, vehicle_label, vehicle_property, property_value))
-
-
-def make_commodity_mode_dict(the_scenario, logger):
-
-    logger.info("START: make_commodity_mode_dict")
-
-    if the_scenario.commodity_mode_data == "None":
-        logger.info('commodity_mode_data file not specified.')
-        return {} # return empty dict
-
-    # check if path to table exists
-    elif not os.path.exists(the_scenario.commodity_mode_data):
-        logger.warning("warning: cannot find commodity_mode_data file: {}".format(the_scenario.commodity_mode_data))
-        return {}  # return empty dict
-
-    # initialize dict and read through commodity_mode CSV
-    commodity_mode_dict = {}
-    with open(the_scenario.commodity_mode_data, 'r') as rf:
-        line_num = 1
-        header = None  # will assign within for loop
-        for line in rf:
-            if line_num == 1:
-                header = line.rstrip('\n').split(',')
-                # Replace the short pipeline name with the long name
-                for h in range(len(header)):
-                    if header[h] == 'pipeline_crude':
-                        header[h] = 'pipeline_crude_trf_rts'
-                    elif header[h] == 'pipeline_prod':
-                        header[h] = 'pipeline_prod_trf_rts'
-            else:
-                flds = line.rstrip('\n').split(',')
-                commodity_name = flds[0].lower()
-                assignment = flds[1:]
-                if commodity_name in commodity_mode_dict.keys():
-                    logger.warning('Commodity: {} already exists. Overwriting with assignments: {}'.format(commodity_name, assignment))
-                commodity_mode_dict[commodity_name] = dict(zip(header[1:], assignment))
-            line_num += 1
-
-    # warn if trying to permit a mode that is not permitted in the scenario
-    for commodity in commodity_mode_dict:
-        for mode in commodity_mode_dict[commodity]:
-            if commodity_mode_dict[commodity][mode] != 'N' and mode not in the_scenario.permittedModes:
-                logger.warning("Mode: {} not permitted in scenario. Commodity: {} will not travel on this mode".format(mode, commodity))
-
-    return commodity_mode_dict
-
-
-def commodity_mode_setup(the_scenario, logger):
-
-    logger.info("START: commodity_mode_setup")
-
-    # set up vehicle types table
-    vehicle_type_setup(the_scenario, logger)
-
-    with sqlite3.connect(the_scenario.main_db) as main_db_con:
-
-        main_db_con.executescript("""
-        drop table if exists commodity_mode;
-        
-        create table commodity_mode(
-        mode text,
-        commodity_id text,
-        commodity_phase text,
-        vehicle_label text,
-        allowed_yn text,
-        CONSTRAINT unique_commodity_and_mode UNIQUE(commodity_id, mode))
-        ;""")
-
-        # query commmodities table
-        commod = main_db_con.execute("select commodity_name, commodity_id, phase_of_matter from commodities where commodity_name <> 'multicommodity';")
-        commod = commod.fetchall()
-        commodities = {}
-        for row in commod:
-            commodity_name = row[0]
-            commodity_id = row[1]
-            phase_of_matter = row[2]
-            commodities[commodity_name] = (commodity_id, phase_of_matter)
-
-        # query vehicle types table
-        vehs = main_db_con.execute("select distinct mode, vehicle_label from vehicle_types;")
-        vehs = vehs.fetchall()
-        vehicle_types = {}
-        for row in vehs:
-            mode = row[0]
-            vehicle_label = row[1]
-            if mode not in vehicle_types:
-                # add new mode to dictionary and start vehicle list
-                vehicle_types[mode] = [vehicle_label]
-            else:
-                # append new vehicle to mode's vehicle list
-                vehicle_types[mode].append(vehicle_label)
-
-        # assign mode permissions and vehicle labels to commodities
-        commodity_mode_dict = make_commodity_mode_dict(the_scenario, logger)
-        logger.info("----- commodity/vehicle type table -----")
-
-        for permitted_mode in the_scenario.permittedModes:
-            for k, v in iteritems(commodities):
-                commodity_name = k
-                commodity_id = v[0]
-                phase_of_matter = v[1]
-
-                allowed = 'Y'  # may be updated later in loop
-                vehicle_label = 'Default'  # may be updated later in loop
-
-                if commodity_name in commodity_mode_dict and permitted_mode in commodity_mode_dict[commodity_name]:
-
-                    # get user's entry for commodity and mode
-                    assignment = commodity_mode_dict[commodity_name][permitted_mode]
-
-                    if assignment == 'Y':
-                        if phase_of_matter != 'liquid' and 'pipeline' in permitted_mode:
-                            # solids not permitted on pipeline.
-                            # note that FTOT previously asserts no custom vehicle label is created for pipeline
-                            logger.warning("commodity {} is not liquid and cannot travel through pipeline mode: {}".format(
-                                commodity_name, permitted_mode))
-                            allowed = 'N'
-                            vehicle_label = 'NA'
-
-                    elif assignment == 'N':
-                        allowed = 'N'
-                        vehicle_label = 'NA'
-
-                    else:
-                        # user specified a vehicle type
-                        allowed = 'Y'
-                        if permitted_mode in vehicle_types and assignment in vehicle_types[permitted_mode]:
-                            # accept user's assignment
-                            vehicle_label = assignment
-                        else:
-                            # assignment not a known vehicle. fail.
-                            raise Exception("improper vehicle label in Commodity_Mode_Data_csv for commodity: {}, mode: {}, and vehicle: {}". \
-                                    format(commodity_name, permitted_mode, assignment))
-
-                elif 'pipeline' in permitted_mode:
-                    # for unspecified commodities, default to not permitted on pipeline
-                    allowed = 'N'
-                    vehicle_label = 'NA'
-
-                logger.info("Commodity name: {}, Mode: {}, Allowed: {}, Vehicle type: {}". \
-                            format(commodity_name, permitted_mode, allowed, vehicle_label))
-
-                # write table. only includes modes that are permitted in the scenario xml file.
-                main_db_con.execute("""
-                   insert or ignore into commodity_mode
-                   (mode, commodity_id, commodity_phase, vehicle_label, allowed_yn) 
-                   VALUES 
-                   ('{}',{},'{}','{}','{}')
-                   ;
-                   """.format(permitted_mode, commodity_id, phase_of_matter, vehicle_label, allowed))
-
-    return
-
-
 # ===============================================================================
 
 
@@ -831,7 +561,7 @@ def add_storage_routes(the_scenario, logger):
         main_db_con.execute("""create table if not exists route_reference(
         route_id INTEGER PRIMARY KEY, route_type text, route_name text, scenario_rt_id integer, from_node_id integer,
         to_node_id integer, from_location_id integer, to_location_id integer, from_facility_id integer, to_facility_id integer,
-        commodity_id integer, phase_of_matter text, cost numeric, length numeric, first_nx_edge_id integer, last_nx_edge_id integer, transport_cost numeric,
+        commodity_id integer, phase_of_matter text, cost numeric, length numeric, first_nx_edge_id integer, last_nx_edge_id integer, transport_cost numeric, co2 numeric,
         CONSTRAINT unique_routes UNIQUE(route_type, route_name, scenario_rt_id));""")
         main_db_con.execute(
             "insert or ignore into route_reference(route_type, route_name, scenario_rt_id) select 'storage', route_name, 0 from storage"
@@ -1003,6 +733,7 @@ def generate_first_edges_from_source_facilities(the_scenario, schedule_length, l
         commodity_mode_data = main_db_con.execute("select * from commodity_mode;")
         commodity_mode_data = commodity_mode_data.fetchall()
         commodity_mode_dict = {}
+        commodity_phase_dict = {}
         for row in commodity_mode_data:
             mode = row[0]
             commodity_id = int(row[1])
@@ -1010,6 +741,7 @@ def generate_first_edges_from_source_facilities(the_scenario, schedule_length, l
             vehicle_label = row[3]
             allowed_yn = row[4]
             commodity_mode_dict[mode, commodity_id] = allowed_yn
+            commodity_phase_dict[commodity_id] = commodity_phase
 
 
         source_edge_data = main_db_con.execute("""select
@@ -1108,7 +840,7 @@ def generate_first_edges_from_source_facilities(the_scenario, schedule_length, l
                     tariff_id = tariff_row[0]
 
             if mode in the_scenario.permittedModes and (mode, commodity_id) in commodity_mode_dict.keys() \
-                    and commodity_mode_dict[mode, commodity_id] == 'Y':
+                    and commodity_mode_dict[mode, commodity_id] == 'Y' and commodity_phase_dict[commodity_id] == phase_of_matter:
 
                 # Edges are placeholders for flow variables
                 # 4-17: if both ends have no location, iterate through viable commodities and days, create edge
@@ -1921,30 +1653,32 @@ def generate_edges_from_routes(the_scenario, schedule_length, logger):
         # from shortest_edges se
         # """)
 
-        # From Olivia
-        db_cur.execute("""insert or ignore into route_reference (route_type,scenario_rt_id,from_node_id,to_node_id,from_location_id,to_location_id,from_facility_id,to_facility_id,cost,length,phase_of_matter,commodity_id,first_nx_edge_id,last_nx_edge_id,transport_cost)
-        select 'transport', odp.scenario_rt_id, odp.from_node_id, odp.to_node_id,odp.from_location_id,odp.to_location_id,
-        odp.from_facility_id, odp.to_facility_id, r2.cost, 
-        r2.length, odp.phase_of_matter, odp.commodity_id, r2.first_nx_edge, r2.last_nx_edge, r2.transport_cost
+        db_cur.execute("""insert or ignore into route_reference (route_type,scenario_rt_id,from_node_id,to_node_id,from_location_id,to_location_id,from_facility_id,to_facility_id,cost,length,phase_of_matter,commodity_id,first_nx_edge_id,last_nx_edge_id,transport_cost,co2)
+        SELECT 'transport', odp.scenario_rt_id, odp.from_node_id, odp.to_node_id, odp.from_location_id, odp.to_location_id,
+            odp.from_facility_id, odp.to_facility_id, r2.cost, 
+            r2.length, odp.phase_of_matter, odp.commodity_id, r2.first_nx_edge, r2.last_nx_edge, r2.transport_cost, r2.co2
         FROM od_pairs odp, 
-        (select r1.scenario_rt_id, r1.length, r1.cost, r1.transport_cost, r1.num_edges, re1.edge_id as first_nx_edge, re2.edge_id as last_nx_edge, r1.phase_of_matter from 
-        (select scenario_rt_id, sum(e.length) as length, sum(e.route_cost) as cost, sum(e.transport_cost) as transport_cost, max(rt_order_ind) as num_edges, e.phase_of_matter_id as phase_of_matter --, count(e.edge_id) 
-        from route_edges re
-        LEFT OUTER JOIN --everything from the route edges table, only edge data from the adhoc table that matches route_id
-        (select ne.edge_id, 
-        nec.route_cost as route_cost,
-        nec.transport_cost as transport_cost,
-        ne.length as length, 
-        ne.mode_source as mode,
-        nec.phase_of_matter_id
-        from networkx_edges ne, networkx_edge_costs nec --or Edges table?
-        where nec.edge_id = ne.edge_id) e --this is the adhoc edge info table
-        on re.edge_id=e.edge_id
-        group by scenario_rt_id, phase_of_matter) r1
-        join (select * from route_edges where rt_order_ind = 1) re1 on r1.scenario_rt_id = re1.scenario_rt_id
-        join route_edges re2 on r1.scenario_rt_id = re2.scenario_rt_id and r1.num_edges = re2.rt_order_ind) r2
-        where r2.scenario_rt_id = odp.scenario_rt_id and r2.phase_of_matter = odp.phase_of_matter
-        ;""")
+        (SELECT r1.scenario_rt_id, r1.length, r1.cost, r1.transport_cost, r1.co2, r1.num_edges, re1.edge_id as first_nx_edge, re2.edge_id as last_nx_edge, r1.phase_of_matter
+         FROM (SELECT scenario_rt_id, sum(e.length) as length, sum(e.route_cost) as cost, sum(e.transport_cost) as transport_cost, sum(e.co2) as co2, max(rt_order_ind) as num_edges, e.phase_of_matter_id as phase_of_matter --, count(e.edge_id) 
+               FROM route_edges re
+               LEFT OUTER JOIN --everything from the route edges table, only edge data from the adhoc table that matches route_id
+               (SELECT ne.edge_id, 
+                       nec.route_cost as route_cost,
+                       nec.transport_cost as transport_cost,
+                       nec.co2_cost / {} as co2, --grams CO2 per commodity mass
+                       ne.length as length, 
+                       ne.mode_source as mode,
+                       nec.phase_of_matter_id
+                FROM networkx_edges ne, networkx_edge_costs nec --or Edges table?
+                WHERE nec.edge_id = ne.edge_id) e --this is the adhoc edge info table
+               ON re.edge_id = e.edge_id
+               GROUP BY scenario_rt_id, phase_of_matter) r1
+              JOIN (SELECT * FROM route_edges where rt_order_ind = 1) re1
+              ON r1.scenario_rt_id = re1.scenario_rt_id
+              JOIN route_edges re2
+              ON r1.scenario_rt_id = re2.scenario_rt_id and r1.num_edges = re2.rt_order_ind) r2
+        WHERE r2.scenario_rt_id = odp.scenario_rt_id and r2.phase_of_matter = odp.phase_of_matter
+        ;""".format(the_scenario.co2_unit_cost.magnitude))
         
         route_data = main_db_con.execute("select * from route_reference where route_type = 'transport';")
 
@@ -2147,8 +1881,6 @@ def set_edges_volume_capacity(the_scenario, logger):
 
 def pre_setup_pulp(logger, the_scenario):
     logger.info("START: pre_setup_pulp")
-
-    commodity_mode_setup(the_scenario, logger)
 
     # create table to track source facility of commodities with a max transport distance set
     source_tracking_setup(the_scenario, logger)
