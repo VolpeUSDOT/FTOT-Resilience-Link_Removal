@@ -212,7 +212,7 @@ def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT):
     return results_df
 
 def evenness_metrics(dbname, use_mode = 'road'):
-    """Function to calculate evenness of network using four different measures of link importance.
+    """Function to calculate evenness of network using three different measures of link importance.
 
     dbname should be the full path to the FTOT database, main.db
     use_mode should be what part of the transportation network to use. Currently just one string, can flex to a list
