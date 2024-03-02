@@ -1,12 +1,12 @@
 
 def make_disruption_scenarios(disrupt_type, disrupt_steps, scen_path):
     """
-    Method to set up scenarios of disrupting the network in FTOT.
+    Method to set up network disruption scenarios in FTOT.
 
-    This will create a set of scenarios based of of a *completed* FTOT run,
+    This will create a set of scenarios based off of a *completed* FTOT run,
     using the sum of betweenness centrality of the to-from nodes or the volume of the edges
-    as the values to sort by. 'Disruption' in this case will be setting the capacity to 0
-    in the networkx_edges table. This method just sets up the scenarios first.
+    as the values to sort by. 'Disruption' in this case will be setting the route_cost to a very high number
+    in the networkx_edge_costs table. This method just sets up the scenarios first.
 
     disrupt_type: string, BC for betweenness centrality or V for volume
     disrupt_steps: integer, number of edges to disrupt in sequence
@@ -32,11 +32,11 @@ def make_disruption_scenarios(disrupt_type, disrupt_steps, scen_path):
         # Don't copy the temp_networkx_shp_files directory. Do copy main.gdb; otherwise would have to modify the d step
         # to get the main.gdb from the base model, easier to just keep it
         if os.path.exists(disrupt_scen_path):
-                shutil.rmtree(disrupt_scen_path)
+            shutil.rmtree(disrupt_scen_path)
         shutil.copytree(scen_path, disrupt_scen_path,
                        ignore = shutil.ignore_patterns(#'main.gdb',
                            'temp_networkx_shp_files'))
-    print('Prepared ' +  str(disrupt_steps) + ' scenarios based on ' + os.path.split(scen_path)[1])
+    print('Prepared ' + str(disrupt_steps) + ' scenarios based on ' + os.path.split(scen_path)[1])
 
 
 def disrupt_network(disrupt_type, disrupt_steps, scen_path, edges_remove, disrupt_order_ascending=False):
@@ -45,9 +45,9 @@ def disrupt_network(disrupt_type, disrupt_steps, scen_path, edges_remove, disrup
 
     Depends on the above steps to generate the edges_remove table,
     which provides the sum of betweenness centrality and volume of each edge used in the optimal solution
-    from a completed FTOT run.
+    from a completed FTOT run
 
-    edges_remove: pandas.DataFrame, with at a minimum the columns edge_id, sum_BC, and volume
+    edges_remove: pandas.DataFrame with at a minimum the columns edge_id, sum_BC, and volume
     """
 
     import sqlite3
@@ -71,20 +71,18 @@ def disrupt_network(disrupt_type, disrupt_steps, scen_path, edges_remove, disrup
         if disrupt_type == 'V':
             edge_col = 'volume'
 
-        # sort by the selected column, BC or V
+        # Sort by the selected column, BC or V
         edges_remove = edges_remove.sort_values(by = edge_col, ascending = disrupt_order_ascending)
 
         remove_edges_list = edges_remove['edge_id'].iloc[:step + 1].to_list()
         remove_edges_list = str(remove_edges_list).replace('[', '(').replace(']', ')')
 
-        # Setting capacity to 0 would work, but would need to change Capacity_On to True in the scenario.xml
-        # New plan! Set the cost in the networkx_edge_costs table for this list of edges to a high value
-
+        # Set the cost in the networkx_edge_costs table for this list of edges to a high value
         with sqlite3.connect(db_path) as db_con:
-                sql = """update networkx_edge_costs
-                        set route_cost = 99999
-                        where edge_id in """ + remove_edges_list + ";"
-                db_con.execute(sql)
+            sql = """update networkx_edge_costs
+                    set route_cost = 99999
+                    where edge_id in """ + remove_edges_list + ";"
+            db_con.execute(sql)
         db_con.close()
 
         # Also edit the name in the scenario.xml
@@ -94,8 +92,8 @@ def disrupt_network(disrupt_type, disrupt_steps, scen_path, edges_remove, disrup
 
         xml_etree = etree.parse(fullPathToXmlConfigFile, parser)
 
-        # identify specific element path
-        # only runs until a valid path is found for one file
+        # Identify specific element path
+        # Only runs until a valid path is found for one file
         element_path = "{Schema_v7.0.0}Scenario_Name"
 
         target_elem = xml_etree.find(element_path)
@@ -105,13 +103,14 @@ def disrupt_network(disrupt_type, disrupt_steps, scen_path, edges_remove, disrup
 
     print('Disrupted ' + str(disrupt_steps) + ' scenarios')
 
+
 def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT):
     """
     Run the FTOT model from the 'O' optimization steps on
 
-    Runs o1, o2, p, and d steps. This uses the output of an existing FTOT run, in particular the
-    main.db, and re-runs the optimization, post-processing, and reporting steps. Not run are
-    the setup, facilities, connectivity, and graph steps, or the final mapping step.
+    Runs o1, o2, p, d, and m steps. This uses the output of an existing FTOT run, in particular the
+    main.db, and re-runs the optimization, post-processing, reporting, and mapping steps. Not run are
+    the setup, facilities, connectivity, and graph steps.
     This method also extracts key outputs from the log of the o2 step, namely unmet demand and
     total scenario cost.
     """
@@ -142,22 +141,26 @@ def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT):
         cmd = PYTHON + ' ' + FTOT + ' ' + XMLSCENARIO + ' o2'
         os.system(cmd)
 
+        # STEP POST-PROCESSING
         print('Running p for ' + disrupt_name)
 
         cmd = PYTHON + ' ' + FTOT + ' ' + XMLSCENARIO + ' p'
         os.system(cmd)
 
+        # STEP REPORTING
         print('Running d for ' + disrupt_name)
 
         cmd = PYTHON + ' ' + FTOT + ' ' + XMLSCENARIO + ' d'
         os.system(cmd)
 
+        # STEP MAPPING
         print('Running m for ' + disrupt_name)
 
         cmd = PYTHON + ' ' + FTOT + ' ' + XMLSCENARIO + ' m'
         os.system(cmd)
         
         # Get values out of the o2 step log
+        # TODO: consider extracting other relevant metrics to bring into the R Markdown report
         log_path = os.path.join(disrupt_scen_path, 'logs')
 
         # find most recent o2 step log
@@ -188,6 +191,7 @@ def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT):
 
         with open(os.path.join(log_path, latest_log), 'r') as textfile:
             for line in textfile:
+                # TODO: why +=?
                 unmet_demand += re.findall(unmet_pattern, line)
                 unmet_cost += re.findall(unmet_cost_pattern, line)
                 nedge += re.findall(nedge_pattern, line)
@@ -210,6 +214,7 @@ def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT):
     results_df.to_csv(os.path.join(disrupt_root, 'Results.csv'), index = False)
 
     return results_df
+
 
 def evenness_metrics(dbname, use_mode = 'road'):
     """Function to calculate evenness of network using three different measures of link importance.
