@@ -64,10 +64,12 @@ ggplotly(g1)
 ## Maps {.tabset}
 
 ### Symbologize By Rank
+The map below plots the optimal route in the baseline scenario and ranks the top ten links by importance.
+
 ```{r map_rank, fig.width=10, echo=FALSE, results='hide',fig.keep='all'}
 library(sf) # TODO: Add to install
 library(rlist) # TODO: Add to install
-#library(basemaps)
+library(basemaps)
 
 # Read in main GDB
 base_route = st_read(dsn = file.path(params$base_scen, 'main.gdb'), layer = 'optimized_route_segments')
@@ -77,30 +79,45 @@ edges['Rank'] = 1:nrow(edges)
 edges <- edges[1:10,]
 
 route_w_rank = merge(base_route, edges, by.x='NET_SOURCE_OID', by.y = 'mode_oid', all.x = TRUE)
-route_w_rank[is.na(route_w_rank['Rank']), 'Rank'] <- 0
+route_w_rank[is.na(route_w_rank['Rank']), 'Rank'] <- NA
 
-plot(route_w_rank['Rank'])
+#plot(route_w_rank['Rank'])
 
 
 # Get extent
 #extent = st_bbox(route_w_rank)
+#ggplot() + basemap_gglayer(extent)
 
-#basemap_gglayer(extent)
-#ggplot() + geom_sf(data = route_w_rank, aes(color = factor(Rank)))
-
+ggplot() +
+  geom_sf(data = route_w_rank, color='darkgray', linewidth=0.25) +
+  geom_sf(data = subset(route_w_rank, !is.na(Rank)),
+          aes(color = factor(Rank)),
+          linewidth = 1.5) +
+  labs(color='Rank')
+          
 
 
 ```
 
 ### Symbologize By Total Cost
+The top ranked links for importance are removed from the network one-by-one in subsequent disruption scenarios. The map below plots the optimal route in the baseline scenario and highlights each rank removed based on the resulting routing cost in the associated disruption scenario.
+
 ```{r map_cost, fig.width=10, echo=FALSE}
 route_w_rank_res = merge(route_w_rank, res, by.x='Rank', by.y = 'disrupt_step', all.x = TRUE)
 route_w_rank_res <- route_w_rank_res[!duplicated(route_w_rank_res),]
 route_w_rank_res <- route_w_rank_res[order(route_w_rank_res$Rank),]
-route_w_rank_res[is.na(route_w_rank_res['total_cost']), 'total_cost'] <- 0
-plot(route_w_rank_res['total_cost'])
+route_w_rank_res[is.na(route_w_rank_res['total_cost']), 'total_cost'] <- NA
+#plot(route_w_rank_res['total_cost'])
 #ggplot() +  geom_sf(data = route_w_rank_res, aes(color = total_cost))
 
+
+ggplot() +
+  geom_sf(data = route_w_rank_res, color='darkgray', linewidth=0.25) +
+  geom_sf(data = subset(route_w_rank_res, !is.na(total_cost)),
+          aes(color = total_cost),
+          linewidth = 3) +
+  scale_color_gradient(low = "yellow", high = "red", na.value = NA) +
+  labs(color='Total Cost')
 
 ```
 
