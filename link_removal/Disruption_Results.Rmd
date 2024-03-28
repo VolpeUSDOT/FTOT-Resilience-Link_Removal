@@ -30,11 +30,17 @@ suppressPackageStartupMessages(library(tidyr, lib.loc = use_lib))
 suppressPackageStartupMessages(library(DT, lib.loc = use_lib))
 suppressPackageStartupMessages(library(plotly, lib.loc = use_lib))
 suppressPackageStartupMessages(library(knitr, lib.loc = use_lib))
+suppressPackageStartupMessages(library(sf, lib.loc = use_lib))
+suppressPackageStartupMessages(library(rlist, lib.loc = use_lib))
+#suppressPackageStartupMessages(library(basemaps, lib.loc = use_lib))
+suppressPackageStartupMessages(library(leaflet, lib.loc = use_lib))
+suppressPackageStartupMessages(library(htmltools, lib.loc = use_lib))
+
 
 scen_name = strsplit(basename(params$base_scen), '_')[[1]][1]
 ```
 
-# Plotting the disruption scenarios
+## Plotting the disruption scenarios
 
 Total scenario cost versus disruption steps. The number of edges (roadway segments) used at each step is shown by color of the step.
 
@@ -64,60 +70,72 @@ ggplotly(g1)
 ## Maps {.tabset}
 
 ### Symbologize By Rank
-The map below plots the optimal route in the baseline scenario and ranks the top ten links by importance.
+The map below plots the optimal route in the baseline scenario and highlights the top ten links by importance. Hover over each highlighted link to see its Net Source OID (link identifier) and rank.
 
-```{r map_rank, fig.width=10, echo=FALSE, results='hide',fig.keep='all'}
-library(sf) # TODO: Add to install
-library(rlist) # TODO: Add to install
-library(basemaps)
+```{r map_rank, fig.width=8, echo=FALSE}
 
 # Read in main GDB
-base_route = st_read(dsn = file.path(params$base_scen, 'main.gdb'), layer = 'optimized_route_segments')
+base_route = st_read(dsn = file.path(params$base_scen, 'main.gdb'), layer = 'optimized_route_segments', quiet = TRUE)
 base_route <- base_route['NET_SOURCE_OID']
 edges <- read.csv(file.path(params$base_scen, 'Edges_to_Remove.csv'))
 edges['Rank'] = 1:nrow(edges)
 edges <- edges[1:10,]
 
 route_w_rank = merge(base_route, edges, by.x='NET_SOURCE_OID', by.y = 'mode_oid', all.x = TRUE)
-route_w_rank[is.na(route_w_rank['Rank']), 'Rank'] <- NA
+#route_w_rank[is.na(route_w_rank['Rank']), 'Rank'] <- NA
+route_w_rank[is.na(route_w_rank['Rank']), 'Rank'] <- 0
 
-#plot(route_w_rank['Rank'])
 
+#https://learning.nceas.ucsb.edu/2019-11-RRCourse/spatial-vector-analysis-using-sf.html#visualize-sf-objects-with-leaflet
 
-# Get extent
-#extent = st_bbox(route_w_rank)
-#ggplot() + basemap_gglayer(extent)
+route_w_rank <- route_w_rank %>% st_transform(crs = 4326)
 
-ggplot() +
-  geom_sf(data = route_w_rank, color='darkgray', linewidth=0.25) +
-  geom_sf(data = subset(route_w_rank, !is.na(Rank)),
-          aes(color = factor(Rank)),
-          linewidth = 1.5) +
-  labs(color='Rank')
-          
+labels <- paste('Net Source OID:', route_w_rank[route_w_rank$Rank != "0",]$NET_SOURCE_OID,
+                '<br>Rank:', route_w_rank[route_w_rank$Rank != "0",]$Rank) %>%
+          lapply(htmltools::HTML)
+
+leaflet(route_w_rank) %>%
+  addProviderTiles('Esri.WorldGrayCanvas') %>%
+  addPolylines(data = route_w_rank[route_w_rank$Rank == "0",], color='gray', opacity=1, weight = 2) %>%
+  addPolylines(data = route_w_rank[route_w_rank$Rank != "0",],
+               color='red',
+               opacity = 1,
+               weight = 5,
+               label = ~labels,
+               labelOptions = labelOptions(textsize='12px'))
+  
 
 
 ```
 
 ### Symbologize By Total Cost
-The top ranked links for importance are removed from the network one-by-one in subsequent disruption scenarios. The map below plots the optimal route in the baseline scenario and highlights each rank removed based on the resulting routing cost in the associated disruption scenario.
+The top ranked links for importance are removed from the network one-by-one in subsequent disruption scenarios. The map below plots the optimal road links in the baseline scenario and highlights each rank removed based on the resulting scenario cost in the associated disruption scenario.
 
-```{r map_cost, fig.width=10, echo=FALSE}
+```{r map_cost, fig.width=8, echo=FALSE}
 route_w_rank_res = merge(route_w_rank, res, by.x='Rank', by.y = 'disrupt_step', all.x = TRUE)
 route_w_rank_res <- route_w_rank_res[!duplicated(route_w_rank_res),]
 route_w_rank_res <- route_w_rank_res[order(route_w_rank_res$Rank),]
 route_w_rank_res[is.na(route_w_rank_res['total_cost']), 'total_cost'] <- NA
-#plot(route_w_rank_res['total_cost'])
-#ggplot() +  geom_sf(data = route_w_rank_res, aes(color = total_cost))
 
+labels <- paste('Net Source OID:', route_w_rank_res[!is.na(route_w_rank_res$total_cost),]$NET_SOURCE_OID,
+                '<br>Rank:', route_w_rank_res[!is.na(route_w_rank_res$total_cost),]$Rank,
+                '<br>Scenario Cost:', route_w_rank_res[!is.na(route_w_rank_res$total_cos),]$total_cost) %>%
+          lapply(htmltools::HTML)
 
-ggplot() +
-  geom_sf(data = route_w_rank_res, color='darkgray', linewidth=0.25) +
-  geom_sf(data = subset(route_w_rank_res, !is.na(total_cost)),
-          aes(color = total_cost),
-          linewidth = 3) +
-  scale_color_gradient(low = "yellow", high = "red", na.value = NA) +
-  labs(color='Total Cost')
+pal <- colorNumeric(
+  palette = "YlGnBu",
+  domain = route_w_rank_res[!is.na(route_w_rank_res$total_cost),]$total_cost
+)
+
+leaflet(route_w_rank_res) %>%
+  addProviderTiles('Esri.WorldGrayCanvas') %>%
+  addPolylines(data = route_w_rank_res[is.na(route_w_rank_res$total_cost),], color='gray', opacity=1, weight = 2) %>%
+  addPolylines(data = route_w_rank_res[!is.na(route_w_rank_res$total_cost),],
+               color= ~pal(total_cost),
+               opacity = 1,
+               weight = 5,
+               label = ~labels,
+               labelOptions = labelOptions(textsize='12px'))
 
 ```
 
@@ -135,12 +153,10 @@ The right panel colors in the points by the rank in terms of sum of betweenness 
 edges <- read.csv(file.path(params$base_scen, 'Edges_to_Remove.csv'))
 
 e_bc <- edges[order(edges$sum_BC, decreasing = T),] %>%
-  mutate(BC_rank = order(sum_BC, decreasing = T)) %>%
-  mutate(BC_rank = ifelse(BC_rank <= 50, BC_rank, NA))
+  mutate(BC_rank = order(sum_BC, decreasing = T))
 
 e_v <- edges[order(edges$volume, decreasing = T),] %>%
-  mutate(V_rank = order(volume, decreasing = T)) %>%
-  mutate(V_rank = ifelse(V_rank <= 50, V_rank, NA))
+  mutate(V_rank = order(volume, decreasing = T))
 
 e_j <- full_join(e_bc, e_v)
 

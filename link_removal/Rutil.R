@@ -11,7 +11,11 @@ loadpacks <- c(
   'rgdal',
   'rmarkdown',
   'RSQLite',
-  'tidyr'
+  'tidyr',
+  'sf',
+  'rlist',
+  'leaflet',
+  'htmltools'
   )
 
 use_lib <- ifelse(any(grepl("FTOTnetworkEnv", .libPaths())),
