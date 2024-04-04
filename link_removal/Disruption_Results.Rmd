@@ -105,15 +105,25 @@ labels <- paste('Net Source OID:', route_w_rank[route_w_rank$Rank != "0",]$NET_S
                 '<br>Rank:', route_w_rank[route_w_rank$Rank != "0",]$Rank) %>%
           lapply(htmltools::HTML)
 
+
+pal <- colorNumeric(
+  palette = "YlOrRd",
+  domain = route_w_rank[route_w_rank$Rank != "0",]$Rank,
+  reverse = TRUE
+)
+
 leaflet(route_w_rank) %>%
   addProviderTiles('Esri.WorldGrayCanvas') %>%
-  addPolylines(data = route_w_rank[route_w_rank$Rank == "0",], color='gray', opacity=1, weight = 2) %>%
+  addPolylines(color='gray', opacity=1, weight = 2) %>%
   addPolylines(data = route_w_rank[route_w_rank$Rank != "0",],
-               color='red',
+               color = ~pal(route_w_rank[route_w_rank$Rank != "0",]$Rank),
                opacity = 1,
-               weight = 5,
+               weight = 8,
                label = ~labels,
-               labelOptions = labelOptions(textsize='12px'))
+               labelOptions = labelOptions(textsize='12px')) %>%
+  addLegend(pal = pal,
+            values = route_w_rank[route_w_rank$Rank != "0",]$Rank,
+            opacity = 1)
   
 
 
@@ -134,19 +144,22 @@ labels <- paste('Net Source OID:', route_w_rank_res[!is.na(route_w_rank_res$tota
           lapply(htmltools::HTML)
 
 pal <- colorNumeric(
-  palette = "YlGnBu",
-  domain = route_w_rank_res[!is.na(route_w_rank_res$total_cost),]$total_cost
+  palette = "YlOrRd",
+  domain = route_w_rank_res$total_cost
 )
 
 leaflet(route_w_rank_res) %>%
   addProviderTiles('Esri.WorldGrayCanvas') %>%
-  addPolylines(data = route_w_rank_res[is.na(route_w_rank_res$total_cost),], color='gray', opacity=1, weight = 2) %>%
+  addPolylines(color='gray', opacity=1, weight = 2) %>%
   addPolylines(data = route_w_rank_res[!is.na(route_w_rank_res$total_cost),],
                color= ~pal(total_cost),
                opacity = 1,
-               weight = 5,
+               weight = 8,
                label = ~labels,
-               labelOptions = labelOptions(textsize='12px'))
+               labelOptions = labelOptions(textsize='12px')) %>%
+  addLegend(pal = pal,
+            values = ~route_w_rank_res[!is.na(route_w_rank_res$total_cost),]$total_cost,
+            title = 'Total Cost')
 
 ```
 
