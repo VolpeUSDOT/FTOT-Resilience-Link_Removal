@@ -104,11 +104,11 @@ def disrupt_network(disrupt_type, disrupt_steps, scen_path, edges_remove, disrup
     print('Disrupted ' + str(disrupt_steps) + ' scenarios')
 
 
-def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT):
+def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT, MAKE_MAPS):
     """
     Run the FTOT model from the 'O' optimization steps on
 
-    Runs o1, o2, p, d, and m steps. This uses the output of an existing FTOT run, in particular the
+    Runs o1, o2, p, d, and (if MAKE_MAPs is True) m steps. This uses the output of an existing FTOT run, in particular the
     main.db, and re-runs the optimization, post-processing, reporting, and mapping steps. Not run are
     the setup, facilities, connectivity, and graph steps.
     This method also extracts key outputs from the log of the o2 step, namely unmet demand and
@@ -154,10 +154,11 @@ def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT):
         os.system(cmd)
 
         # STEP MAPPING
-        print('Running m for ' + disrupt_name)
+        if MAKE_MAPS:
+            print('Running m for ' + disrupt_name)
 
-        cmd = PYTHON + ' ' + FTOT + ' ' + XMLSCENARIO + ' m'
-        os.system(cmd)
+            cmd = PYTHON + ' ' + FTOT + ' ' + XMLSCENARIO + ' m'
+            os.system(cmd)
         
         # Get values out of the o2 step log
         # TODO: consider extracting other relevant metrics to bring into the R Markdown report
@@ -287,3 +288,57 @@ def evenness_metrics(dbname, use_mode = 'road'):
 
 
     return metric_df
+
+
+def edges_from_line(geom, attrs):
+    """
+    Generate edges for each line in geom
+    Written as a helper for read_gdb
+    """
+    if geom.GetGeometryType() == ogr.wkbLineString:
+        edge_attrs = attrs.copy()
+        last = geom.GetPointCount() - 1
+        edge_attrs["Wkb"] = geom.ExportToWkb()
+        edge_attrs["Wkt"] = geom.ExportToWkt()
+        edge_attrs["Json"] = geom.ExportToJson()
+        yield (geom.GetPoint_2D(0), geom.GetPoint_2D(last), edge_attrs)
+
+    elif geom.GetGeometryType() == ogr.wkbMultiLineString:
+        for i in range(geom.GetGeometryCount()):
+            geom_i = geom.GetGeometryRef(i)
+            for edge in edges_from_line(geom_i, attrs):
+                yield edge
+                
+                
+def read_gdb(path, fc):
+
+    net = nx.MultiDiGraph()
+    gdb = ogr.Open(path)
+    if gdb is None:
+        logger.error("Unable to open {}".format(path))
+        raise RuntimeError("Unable to open {}".format(path))
+    for lyr in gdb:
+        if lyr.GetName() == fc:
+            count = lyr.GetFeatureCount()
+            fields = [x.GetName() for x in lyr.schema]
+            for f in lyr:
+                g = f.geometry()
+                fld_data = [f.GetField(f.GetFieldIndex(x)) for x in fields]
+                attributes = dict(list(zip(fields, fld_data)))
+                attributes["ShpName"] = lyr.GetName()
+                if g.GetGeometryType() == ogr.wkbPoint:
+                    net.add_node(g.GetPoint_2D(0), **attributes)
+                elif g.GetGeometryType() in (ogr.wkbLineString,
+                                            ogr.wkbMultiLineString):
+                    for edge in edges_from_line(g, attributes):
+                        e1, e2, attr = edge
+                        net.add_edge(e1, e2)
+                        key = len(list(net[e1][e2].keys())) - 1
+                        net[e1][e2][key].update(attr)
+                else:
+                    logger.error("GeometryType {} not supported".
+                                format(g.GetGeometryType()))
+                    raise nx.NetworkXError("GeometryType {} not supported".
+                                        format(g.GetGeometryType()))
+
+    return net

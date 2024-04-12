@@ -9,8 +9,14 @@ library(rmarkdown)
 args <- commandArgs(trailingOnly = TRUE)
 
 base_scen <- args[1]
-background_flows <- args[2]
-disruption_type <- args[3]
+
+if (args[2] == 'True'){
+  background_flows = TRUE
+} else {
+  background_flows = FALSE
+}
+
+disrupt_type <- args[3]
 
 render('Disruption_Results.Rmd',
        params = list(
