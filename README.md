@@ -1,6 +1,6 @@
 # FTOT-Resilience-Link_Removal
 
-FTOT Resilience Tool: Link Removal tool for assessing network resilience.
+FTOT Resilience Tool: Link Rank and Removal tool for assessing network resilience.
 
 See the [FTOT homepage](https://volpeusdot.github.io/FTOT-Public) for general information about the Freight and Fuel Transportation Optimization Tool (FTOT).
 
