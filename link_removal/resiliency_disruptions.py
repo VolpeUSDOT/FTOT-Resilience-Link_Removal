@@ -315,7 +315,6 @@ def read_gdb(path, fc):
     net = nx.MultiDiGraph()
     gdb = ogr.Open(path)
     if gdb is None:
-        logger.error("Unable to open {}".format(path))
         raise RuntimeError("Unable to open {}".format(path))
     for lyr in gdb:
         if lyr.GetName() == fc:
@@ -336,8 +335,6 @@ def read_gdb(path, fc):
                         key = len(list(net[e1][e2].keys())) - 1
                         net[e1][e2][key].update(attr)
                 else:
-                    logger.error("GeometryType {} not supported".
-                                format(g.GetGeometryType()))
                     raise nx.NetworkXError("GeometryType {} not supported".
                                         format(g.GetGeometryType()))
 
