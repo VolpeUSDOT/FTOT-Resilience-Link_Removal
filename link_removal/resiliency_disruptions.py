@@ -295,6 +295,7 @@ def edges_from_line(geom, attrs):
     Generate edges for each line in geom
     Written as a helper for read_gdb
     """
+    from osgeo import ogr
     if geom.GetGeometryType() == ogr.wkbLineString:
         edge_attrs = attrs.copy()
         last = geom.GetPointCount() - 1
@@ -311,7 +312,10 @@ def edges_from_line(geom, attrs):
                 
                 
 def read_gdb(path, fc):
-
+    
+    import networkx as nx
+    from osgeo import ogr
+    
     net = nx.MultiDiGraph()
     gdb = ogr.Open(path)
     if gdb is None:
