@@ -10,8 +10,7 @@ output:
       smooth_scroll: false
 params:
   base_scen: 'C:\FTOT\scenarios\reference_scenarios\rs7_capacity'
-  background_flows: TRUE
-  disrupt_type: 'BC'
+  disrupt_type: 'V'
 ---
 
 <!-- Add the following line manually to the rendered HTML document so that IE does not block the javascript elements: -->
@@ -48,9 +47,13 @@ if (params$disrupt_type == 'BC'){
   disrupt_type_full = 'Volume'
 }
 
-disrupt_root = paste(params$base_scen, disrupt_type, 'disrupt', sep = '_')
+disrupt_root <- paste(params$base_scen, disrupt_type, 'disrupt', sep = '_')
 
-res = read.csv(file.path(disrupt_root, 'Results.csv'))
+res <- read.csv(file.path(disrupt_root, 'Results.csv'))
+edges <- read.csv(file.path(disrupt_root, 'Edges_to_Remove.csv'))
+
+# TODO: Check for duplicate edges
+hasDuplicates <- any(duplicated(edges$edge_id))
 
 ```
 
@@ -62,13 +65,49 @@ __Report Date:__ `r Sys.Date()`
 
 The FTOT Link Removal tool assesses how resilient an optimal solution is to the removal of key links in the network. The tool removes road links from the network one-by-one in order of importance, each time  re-solving for the optimal routing solution and the new scenario cost. Link importance is based either on a network property known as betweenness centrality or on the volume of vehicles on roadway links, depending on user selection.
 
-Results for the scenario __`r scen_name`__ are presented below.
+Results for baseline scenario __`r scen_name`__ are presented below.
+
+
+```{r, results='asis', eval=hasDuplicates}
+
+# NOTE: THIS CELL IS RUN ONLY IF DUPLICATED EDGE IDS ARE FOUND
+
+cat('Note: This scenario includes "high importance" edges that flow more than one commodity. As a result, multiple disruption scenarios were created and run for the same road edges. 
+')
+
+```
+## Commodity Flows and Link Importance
+
+The scatter plot below shows the relationship between the amount of commodity flowed in the optimal solution (y-axis) and the importance value (x-axis) of each edge used in the optimal solution of the baseline scenario. Each roadway segment in the optimal solution is represented by a point and is colored by commodity flowed. Edges flowing more than one commodity will have more than one point in the graph.
+
+```{r bc_vol, echo =FALSE, fig.width=8}
+
+
+if (disrupt_type == 'V'){
+ g1 <- edges %>%
+  ggplot() +
+  aes(x = volume, y = variable_value, color=commodity_name, label=edge_id) +
+  geom_point(size = 2) +
+  labs(x = 'Freight Volume (AADT)', y='Commodity Flow', color = 'Commodity') +
+  theme_bw() 
+} else {
+  g1 <-  ggplot() +
+    aes(x = sum_BC, y = variable_value, color=commodity_name, label=edge_id) +
+    geom_point(size = 2) +
+    labs(x = 'Betweeness Centrality', y='Commodity Flow', color = 'Commodity') +
+    theme_bw()
+}
+
+
+ggplotly(g1)
+
+```
 
 ## Scenario Cost by Disruption Step
 
 The graph below presents total scenario cost (or optimization objective value) versus the disruption step. At each step, another road link is removed. For example, in the first disruption step, the most important road link is removed from the network. In the second disruption step, the second most important link is removed, and so on. The color of the points corresponds to the number of roadway links (edges) remaining in the network after each disruption. Scenario costs will remain the same or increase with each successive disruption but should never decrease.
 
-```{r BC_disrupt}
+```{r BC_disrupt, fig.width=8}
 
 # clean up commas
 res$total_cost <- as.numeric(sub('\\,', '', res$total_cost))
@@ -79,7 +118,8 @@ g1 <- ggplot(res, aes(x = disrupt_step,
   geom_point(size = 2, aes(color = nedge)) +
   theme_bw() +
   #ggtitle('Scenario Cost by Disruption Step') +
-  labs(x = 'Disruption Step', y = 'Scenario Cost', color = '# of Edges')
+  labs(x = 'Disruption Step', y = 'Scenario Cost', color = '# of Edges') +
+  theme_bw()
 
 ggplotly(g1)
 
@@ -172,49 +212,11 @@ leaflet(route_w_rank_res) %>%
 ```
 
 
-```{r, results='asis', eval=params$background_flows}
-
-# NOTE: THIS CELL IS RUN ONLY IF BACKGROUND FLOWS ARE ENABLED
-
-cat('## Betweeness Centrality and Background Flows\n\n')
-cat('The scatter plot below shows the relationship between the between centrality and background vehicle flows for links used in the optimal solution of the baseline scenario. Each roadway segment in the optimal solution is represented by a point. This plot appears only for scenarios run with background flows turned on in the FTOT scenario XML file.
-')
-
-```
-
-
-```{r bc_vol, echo =FALSE, fig.width=10, eval=params$background_flows}
-
-
-edges <- read.csv(file.path(params$base_scen, 'Edges_to_Remove.csv'))
-
-e_bc <- edges[order(edges$sum_BC, decreasing = T),] %>%
-  mutate(BC_rank = order(sum_BC, decreasing = T))
-
-e_v <- edges[order(edges$volume, decreasing = T),] %>%
-  mutate(V_rank = order(volume, decreasing = T))
-
-e_j <- full_join(e_bc, e_v)
-
-g2_bc <- ggplot(e_j, aes(x = volume, 
-                      y = sum_BC)) +
-  geom_point(size = 3) +
-  labs(x = 'Volume', y='Betweeness Centrality (BC)', color = 'BC Rank') +
-  theme_bw()
-
-g2_bc
-
-
-```
-
 ## Table of Ranked Segments
 
 The table below lists the segment links that were ranked by importance. Links were iteratively removed in subsequent disruption scenario in order of ranking up to the __user-specified `r nrow(res)` disruption steps__.
 
 ```{r edge_table}
-
-edges <- read.csv(file.path(params$base_scen, 'Edges_to_Remove.csv'))
-
 
 if(disrupt_type == 'BC'){
   e_bc <- edges[order(edges$sum_BC, decreasing = T),] %>%
@@ -224,8 +226,6 @@ if(disrupt_type == 'BC'){
             select(BC_rank,
                    edge_id,
                    length,
-                   capacity,
-                   volume,
                    sum_BC,
                    mode_oid),
           caption = paste("Road segments (edges) disrupted in", scen_name),
@@ -244,7 +244,6 @@ if(disrupt_type == 'BC'){
                    length,
                    capacity,
                    volume,
-                   sum_BC,
                    mode_oid),
           caption = paste("Road segments (edges) disrupted in", scen_name),
           rownames = F,
