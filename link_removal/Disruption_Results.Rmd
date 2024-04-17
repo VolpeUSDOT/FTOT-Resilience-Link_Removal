@@ -139,7 +139,6 @@ The map below plots the optimal route in the baseline scenario and highlights th
 # Read in main GDB
 base_route = st_read(dsn = file.path(params$base_scen, 'main.gdb'), layer = 'optimized_route_segments', quiet = TRUE)
 base_route <- base_route['NET_SOURCE_OID']
-edges <- read.csv(file.path(params$base_scen, 'Edges_to_Remove.csv'))
 edges['Rank'] = 1:nrow(edges)
 edges <- edges[1:10,]
 
