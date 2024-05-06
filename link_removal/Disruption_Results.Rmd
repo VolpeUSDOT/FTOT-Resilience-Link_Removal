@@ -10,7 +10,7 @@ output:
       smooth_scroll: false
 params:
   base_scen: 'C:\FTOT\scenarios\reference_scenarios\rs7_capacity'
-  disrupt_type: 'BC'
+  disrupt_type: 'V'
 ---
 
 <!-- Add the following line manually to the rendered HTML document so that IE does not block the javascript elements: -->
@@ -41,24 +41,27 @@ suppressPackageStartupMessages(library(htmltools, lib.loc = use_lib))
 scen_name = basename(file.path(params$base_scen))
 disrupt_type = params$disrupt_type
 
-if (params$disrupt_type == 'BC'){
-  disrupt_type_full = 'Betweeness Centrality'
-} else {
+disrupt_type_full = 'PLACEHOLDER'
+
+if (params$disrupt_type == 'V'){
   disrupt_type_full = 'Volume'
+} else {
+  disrupt_type_full = 'Betweeness Centrality'
 }
+
 
 disrupt_root <- paste(params$base_scen, params$disrupt_type, 'disrupt', sep = '_')
 
 res <- read.csv(file.path(disrupt_root, 'Results.csv'))
 edges <- read.csv(file.path(disrupt_root, 'Edges_to_Remove.csv'))
 
-# TODO: Check for duplicate edges
+# Check for duplicate edges
 hasDuplicates <- any(duplicated(edges$mode_oid))
 
 ```
 
 __Scenario Name:__ `r scen_name`  
-__Disruption Type:___ `r disrupt_type_full`  
+__Disruption Type:__ `r disrupt_type_full`  
 __Disruption Steps:__ `r nrow(res)`  
 __Report Date:__ `r Sys.Date()`
 
@@ -82,7 +85,7 @@ cat('_Note: This scenario includes "high importance" edges that flow more than o
 
 The scatter plot below shows the relationship between the amount of commodity flowed in the optimal solution (y-axis) and the importance value (x-axis) of each edge used in the optimal solution of the baseline scenario. Each roadway segment in the optimal solution is represented by a point and is colored by commodity flowed. Edges flowing more than one commodity will have more than one point in the graph.
 
-```{r bc_vol, echo =FALSE, fig.width=8}
+```{r bc_vol, echo=FALSE, fig.width=8}
 
 
 if (params$disrupt_type == 'V'){
