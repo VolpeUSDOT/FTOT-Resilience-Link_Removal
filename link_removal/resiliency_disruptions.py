@@ -16,26 +16,20 @@ def make_disruption_scenarios(disrupt_type, disrupt_steps, scen_path):
     import shutil
 
     disrupt_root = os.path.join(os.path.split(scen_path)[0],
-                            '_'.join([os.path.split(scen_path)[1], disrupt_type, 'disrupt']))
+                                '_'.join([os.path.split(scen_path)[1], disrupt_type, 'disrupt']))
 
     if not os.path.exists(disrupt_root):
         os.mkdir(disrupt_root)
 
     # Loop over the steps and make a complete copy of the base scenario in each
     for step in range(disrupt_steps):
-        disrupt_name = 'disrupt' + "{:02d}".format(step + 1) # start at 1
-        # print(disrupt_name)
-
+        disrupt_name = 'disrupt' + "{:02d}".format(step + 1)  # start at 1
         disrupt_scen_path = os.path.join(disrupt_root, disrupt_name)
 
         # Copy the content of source to destination. Remove if already exists
-        # Don't copy the temp_networkx_shp_files directory. Do copy main.gdb; otherwise would have to modify the d step
-        # to get the main.gdb from the base model, easier to just keep it
         if os.path.exists(disrupt_scen_path):
             shutil.rmtree(disrupt_scen_path)
-        shutil.copytree(scen_path, disrupt_scen_path,
-                       ignore = shutil.ignore_patterns(#'main.gdb',
-                           'temp_networkx_shp_files'))
+        shutil.copytree(scen_path, disrupt_scen_path)
     print('Prepared ' + str(disrupt_steps) + ' scenarios based on ' + os.path.split(scen_path)[1])
 
 
@@ -58,7 +52,7 @@ def disrupt_network(disrupt_type, disrupt_steps, scen_path, edges_remove, disrup
                                 '_'.join([os.path.split(scen_path)[1], disrupt_type, 'disrupt']))
 
     for step in range(disrupt_steps):
-        disrupt_name = 'disrupt' + "{:02d}".format(step + 1) # start at 1
+        disrupt_name = 'disrupt' + "{:02d}".format(step + 1)  # start at 1
         disrupt_scen_path = os.path.join(disrupt_root, disrupt_name)
 
         db_name = 'main.db'
@@ -80,8 +74,8 @@ def disrupt_network(disrupt_type, disrupt_steps, scen_path, edges_remove, disrup
         # Set the cost in the networkx_edge_costs table for this list of edges to a high value
         with sqlite3.connect(db_path) as db_con:
             sql = """update networkx_edge_costs
-                    set route_cost = 99999
-                    where edge_id in """ + remove_edges_list + ";"
+                     set route_cost = 99999
+                     where edge_id in """ + remove_edges_list + ";"
             db_con.execute(sql)
         db_con.close()
 
@@ -108,7 +102,7 @@ def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT, MAKE_MAPS)
     """
     Run the FTOT model from the 'O' optimization steps on
 
-    Runs o1, o2, p, d, and (if MAKE_MAPs is True) m steps. This uses the output of an existing FTOT run, in particular the
+    Runs o1, o2, p, d, and (if MAKE_MAPS is True) m steps. This uses the output of an existing FTOT run, in particular the
     main.db, and re-runs the optimization, post-processing, reporting, and mapping steps. Not run are
     the setup, facilities, connectivity, and graph steps.
     This method also extracts key outputs from the log of the o2 step, namely unmet demand and
@@ -124,7 +118,7 @@ def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT, MAKE_MAPS)
                                 '_'.join([os.path.split(scen_path)[1], disrupt_type, 'disrupt']))
 
     for step in range(disrupt_steps):
-        disrupt_name = 'disrupt' + "{:02d}".format(step + 1) # start at 1
+        disrupt_name = 'disrupt' + "{:02d}".format(step + 1)  # start at 1
         disrupt_scen_path = os.path.join(disrupt_root, disrupt_name)
 
         XMLSCENARIO = os.path.join(disrupt_scen_path, 'scenario.xml')
@@ -164,7 +158,7 @@ def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT, MAKE_MAPS)
         # TODO: consider extracting other relevant metrics to bring into the R Markdown report
         log_path = os.path.join(disrupt_scen_path, 'logs')
 
-        # find most recent o2 step log
+        # Find most recent o2 step log
         log_list = []
 
         for log in os.listdir(log_path):
@@ -181,7 +175,7 @@ def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT, MAKE_MAPS)
 
         # \s any white space
         # \D non-digit
-        # cost values are comma-separated, so need to include comma as a non-capturing group as well
+        # Cost values are comma-separated, so need to include comma as a non-capturing group as well
         # Use https://www.garrickadenbuie.com/project/regexplain/ to test
         # Use noncapturing groups to find the line, then capture the numerical output
 
@@ -192,7 +186,6 @@ def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT, MAKE_MAPS)
 
         with open(os.path.join(log_path, latest_log), 'r') as textfile:
             for line in textfile:
-                # TODO: why +=?
                 unmet_demand += re.findall(unmet_pattern, line)
                 unmet_cost += re.findall(unmet_cost_pattern, line)
                 nedge += re.findall(nedge_pattern, line)
@@ -220,8 +213,8 @@ def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT, MAKE_MAPS)
 def evenness_metrics(dbname, use_mode = 'road'):
     """Function to calculate evenness of network using three different measures of link importance.
 
-    dbname should be the full path to the FTOT database, main.db
-    use_mode should be what part of the transportation network to use. Currently just one string, can flex to a list
+    dbname: full path to the FTOT database, main.db
+    use_mode: layer of the transportation network to use (currently just one string, can flex to a list)
     For example: dbname= C:\FTOT\scenarios\reference_scenarios\rs7_capacity\main.db
     It will read from the `edges` table of that database.
     """
@@ -309,8 +302,8 @@ def edges_from_line(geom, attrs):
             geom_i = geom.GetGeometryRef(i)
             for edge in edges_from_line(geom_i, attrs):
                 yield edge
-                
-                
+
+
 def read_gdb(path, fc):
     
     import networkx as nx

@@ -6,16 +6,16 @@ loadpacks <- c(
   'DT',
   'egg',
   'ggplot2',
+  'htmltools',
   'knitr',
+  'leaflet',
   'plotly',
   'rgdal',
+  'rlist',
   'rmarkdown',
   'RSQLite',
-  'tidyr',
   'sf',
-  'rlist',
-  'leaflet',
-  'htmltools'
+  'tidyr'
   )
 
 use_lib <- ifelse(any(grepl("FTOTnetworkEnv", .libPaths())),

@@ -37,18 +37,14 @@ suppressPackageStartupMessages(library(rlist, lib.loc = use_lib))
 suppressPackageStartupMessages(library(leaflet, lib.loc = use_lib))
 suppressPackageStartupMessages(library(htmltools, lib.loc = use_lib))
 
-
 scen_name = basename(file.path(params$base_scen))
 disrupt_type = params$disrupt_type
-
-disrupt_type_full = 'PLACEHOLDER'
 
 if (params$disrupt_type == 'V'){
   disrupt_type_full = 'Volume'
 } else {
   disrupt_type_full = 'Betweeness Centrality'
 }
-
 
 disrupt_root <- paste(params$base_scen, params$disrupt_type, 'disrupt', sep = '_')
 
@@ -104,7 +100,6 @@ if (params$disrupt_type == 'V'){
     theme_bw()
 }
 
-
 ggplotly(g1)
 
 ```
@@ -148,7 +143,6 @@ edges <- edges[1:10,]
 route_w_rank = merge(base_route, edges, by.x='NET_SOURCE_OID', by.y = 'mode_oid', all.x = TRUE)
 route_w_rank[is.na(route_w_rank['Rank']), 'Rank'] <- 0
 
-
 #https://learning.nceas.ucsb.edu/2019-11-RRCourse/spatial-vector-analysis-using-sf.html#visualize-sf-objects-with-leaflet
 
 route_w_rank <- route_w_rank %>% st_transform(crs = 4326)
@@ -156,7 +150,6 @@ route_w_rank <- route_w_rank %>% st_transform(crs = 4326)
 labels <- paste('Net Source OID:', route_w_rank[route_w_rank$Rank != "0",]$NET_SOURCE_OID,
                 '<br>Rank:', route_w_rank[route_w_rank$Rank != "0",]$Rank) %>%
           lapply(htmltools::HTML)
-
 
 pal <- colorNumeric(
   palette = "YlOrRd",
@@ -177,8 +170,6 @@ leaflet(route_w_rank) %>%
             values = route_w_rank[route_w_rank$Rank != "0",]$Rank,
             title = 'Rank',
             opacity = 1)
-  
-
 
 ```
 
