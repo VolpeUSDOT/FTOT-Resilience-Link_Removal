@@ -50,6 +50,8 @@ disrupt_root <- paste(params$base_scen, params$disrupt_type, 'disrupt', sep = '_
 
 res <- read.csv(file.path(disrupt_root, 'Results.csv'))
 edges <- read.csv(file.path(disrupt_root, 'Edges_to_Remove.csv'))
+edges['Rank'] = 1:nrow(edges)
+edges <- edges[1:nrow(res),]
 
 # Check for duplicate edges
 hasDuplicates <- any(duplicated(edges$mode_oid))
@@ -87,20 +89,21 @@ The scatter plot below shows the relationship between the amount of commodity fl
 if (params$disrupt_type == 'V'){
  g1 <- edges %>%
   ggplot() +
-  aes(x = volume, y = variable_value, color=commodity_name, label=edge_id) +
+  aes(x = volume, y = variable_value, color=commodity_name,
+      text=sprintf("Mode OID: %s<br>Commodity: %s<br>Commodity Flow: %s<br>Freight Volume: %s", mode_oid, commodity_name, variable_value, volume)) +
   geom_point(size = 2) +
   labs(x = 'Freight Volume (AADT)', y='Commodity Flow', color = 'Commodity') +
-  theme_bw() 
+  theme_bw()
 } else {
   g1 <-  edges %>%
     ggplot() +
-    aes(x = sum_BC, y = variable_value, color=commodity_name, label=edge_id) +
+    aes(x = sum_BC, y = variable_value, color=commodity_name,
+        text=sprintf("Mode OID: %s<br>Commodity: %s<br>Commodity Flow: %s<br>BC: %s", mode_oid, commodity_name, variable_value, sum_BC)) +
     geom_point(size = 2) +
     labs(x = 'Betweeness Centrality', y='Commodity Flow', color = 'Commodity') +
     theme_bw()
 }
-
-ggplotly(g1)
+ggplotly(g1, tooltip = "text")
 
 ```
 
@@ -113,32 +116,36 @@ The graph below presents total scenario cost (or optimization objective value) v
 # clean up commas
 res$total_cost <- as.numeric(sub('\\,', '', res$total_cost))
 
-g1 <- ggplot(res, aes(x = disrupt_step, 
+res_edges <- merge(res, edges, by.x = 'disrupt_step', by.y = 'Rank')
+res_edges$cost_change <- res_edges$total_cost - lag(res_edges$total_cost)
+
+labels <- paste('Link Removed (Net Source OID):', res_edges$mode_oid) %>%
+          lapply(htmltools::HTML)
+
+g1 <- ggplot(res_edges, aes(x = disrupt_step, 
                       y = total_cost)) +
   geom_step(size = 2, color = 'grey80') +
-  geom_point(size = 2, aes(color = nedge)) +
-  theme_bw() +
-  #ggtitle('Scenario Cost by Disruption Step') +
+  geom_point(size = 2, aes(color = nedge,
+                           text=sprintf("Disruption Step: %s<br>Total Cost: %s<br>Change in Cost: %s<br>Edge Removed (Mode OID): %s<br>Edges in Solution: %s<br>",
+                                        disrupt_step, total_cost, cost_change, mode_oid, nedge))) +
   labs(x = 'Disruption Step', y = 'Scenario Cost', color = '# of Edges') +
   theme_bw()
 
-ggplotly(g1)
+ggplotly(g1, tooltip = c("text"))
 
 ```
 
 ## Maps {.tabset}
-The maps below show the optimal road network in the baseline scenario and highlight up to 10 links by importance ranking or by scenario cost.
+The maps below show the optimal road network in the baseline scenario and highlight links by importance ranking, by scenario cost, or by change in scenario cost from the previous disruption step.
 
-### Symbologize By Rank
-The map below plots the optimal route in the baseline scenario and highlights the top ten links by importance. Hover over each highlighted link to see its Net Source OID (link identifier) and rank.
+### By Importance Rank
+The map below plots the optimal route in the baseline scenario and highlights each link removed in a disruption step according to its importance ranking. Hover over each highlighted link to see its Net Source OID (link identifier) and rank.
 
 ```{r map_rank, fig.width=8, echo=FALSE}
 
 # Read in main GDB
 base_route = st_read(dsn = file.path(params$base_scen, 'main.gdb'), layer = 'optimized_route_segments', quiet = TRUE)
 base_route <- base_route['NET_SOURCE_OID']
-edges['Rank'] = 1:nrow(edges)
-edges <- edges[1:10,]
 
 route_w_rank = merge(base_route, edges, by.x='NET_SOURCE_OID', by.y = 'mode_oid', all.x = TRUE)
 route_w_rank[is.na(route_w_rank['Rank']), 'Rank'] <- 0
@@ -147,7 +154,7 @@ route_w_rank[is.na(route_w_rank['Rank']), 'Rank'] <- 0
 
 route_w_rank <- route_w_rank %>% st_transform(crs = 4326)
 
-labels <- paste('Net Source OID:', route_w_rank[route_w_rank$Rank != "0",]$NET_SOURCE_OID,
+labels <- paste('Mode OID:', route_w_rank[route_w_rank$Rank != "0",]$NET_SOURCE_OID,
                 '<br>Rank:', route_w_rank[route_w_rank$Rank != "0",]$Rank) %>%
           lapply(htmltools::HTML)
 
@@ -173,8 +180,8 @@ leaflet(route_w_rank) %>%
 
 ```
 
-### Symbologize By Total Cost
-The top ranked links for importance are removed from the network one-by-one in subsequent disruption scenarios. The map below plots the optimal road links in the baseline scenario and highlights each rank removed based on the resulting scenario cost in the associated disruption scenario.
+### By Total Cost
+The top ranked links for importance are removed from the network one-by-one in subsequent disruption scenarios. The map below plots the optimal road links in the baseline scenario and highlights each link removed based on the resulting scenario cost in the associated disruption scenario.
 
 ```{r map_cost, fig.width=8, echo=FALSE}
 route_w_rank_res = merge(route_w_rank, res, by.x='Rank', by.y = 'disrupt_step', all.x = TRUE)
@@ -182,9 +189,9 @@ route_w_rank_res <- route_w_rank_res[!duplicated(route_w_rank_res),]
 route_w_rank_res <- route_w_rank_res[order(route_w_rank_res$Rank),]
 route_w_rank_res[is.na(route_w_rank_res['total_cost']), 'total_cost'] <- NA
 
-labels <- paste('Net Source OID:', route_w_rank_res[!is.na(route_w_rank_res$total_cost),]$NET_SOURCE_OID,
+labels <- paste('Mode OID:', route_w_rank_res[!is.na(route_w_rank_res$total_cost),]$NET_SOURCE_OID,
                 '<br>Rank:', route_w_rank_res[!is.na(route_w_rank_res$total_cost),]$Rank,
-                '<br>Scenario Cost:', route_w_rank_res[!is.na(route_w_rank_res$total_cos),]$total_cost) %>%
+                '<br>Scenario Cost:', route_w_rank_res[!is.na(route_w_rank_res$total_cost),]$total_cost) %>%
           lapply(htmltools::HTML)
 
 pal <- colorNumeric(
@@ -208,6 +215,37 @@ leaflet(route_w_rank_res) %>%
 
 ```
 
+### By Change in Cost
+The top ranked links for importance are removed from the network one-by-one in subsequent disruption scenarios. The map below plots the optimal road links in the baseline scenario and highlights each link removed based on the resulting scenario cost in the associated disruption scenario.
+
+```{r map_cost_change, fig.width=8, echo=FALSE}
+route_w_rank_res$cost_change <- route_w_rank_res$total_cost - lag(route_w_rank_res$total_cost)
+
+labels <- paste('Mode OID:', route_w_rank_res[!is.na(route_w_rank_res$cost_change),]$NET_SOURCE_OID,
+                '<br>Rank:', route_w_rank_res[!is.na(route_w_rank_res$cost_change),]$Rank,
+                '<br>Change in Scenario Cost:', route_w_rank_res[!is.na(route_w_rank_res$cost_change),]$cost_change) %>%
+          lapply(htmltools::HTML)
+
+pal <- colorNumeric(
+  palette = "YlOrRd",
+  domain = route_w_rank_res$cost_change
+)
+
+leaflet(route_w_rank_res) %>%
+  addProviderTiles('Esri.WorldGrayCanvas') %>%
+  addPolylines(color='gray', opacity=1, weight = 2) %>%
+  addPolylines(data = route_w_rank_res[!is.na(route_w_rank_res$cost_change),],
+               color= ~pal(cost_change),
+               opacity = 1,
+               weight = 6,
+               label = ~labels,
+               labelOptions = labelOptions(textsize='12px')) %>%
+  addLegend(pal = pal,
+            values = ~route_w_rank_res[!is.na(route_w_rank_res$cost_change),]$cost_change,
+            title = 'Change in Cost',
+            opacity=1)
+
+```
 
 ## Table of Ranked Segments
 
