@@ -6,11 +6,15 @@ loadpacks <- c(
   'DT',
   'egg',
   'ggplot2',
+  'htmltools',
   'knitr',
+  'leaflet',
   'plotly',
   'rgdal',
+  'rlist',
   'rmarkdown',
   'RSQLite',
+  'sf',
   'tidyr'
   )
 

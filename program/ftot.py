@@ -27,9 +27,9 @@ if pint.__version__ == 0.9:
     ureg.define('us_ton = US_ton')
 
 
-FTOT_VERSION = "2023.1"
-SCHEMA_VERSION = "7.0.1"
-VERSION_DATE = "4/10/2023"
+FTOT_VERSION = "2024.1"
+SCHEMA_VERSION = "7.0.4"
+VERSION_DATE = "4/3/2024"
 
 # ===================================================================================================
 
@@ -40,7 +40,7 @@ if __name__ == '__main__':
     # PARSE ARGS
     # ----------------------------------------------------------------------------------------------
 
-    program_description = 'Freight/Fuels Transportation Optimization Tool (FTOT). Version Number: ' \
+    program_description = 'Freight and Fuel Transportation Optimization Tool (FTOT). Version Number: ' \
                           + FTOT_VERSION + ", (" + VERSION_DATE + ")"
 
     help_text = """
@@ -110,7 +110,7 @@ if __name__ == '__main__':
     parser.add_argument("task", choices=("s", "f", "f2", "c", "c2", "g", "g2",
                                          "o", "oc",
                                          "o1", "o2", "o2b", "oc1", "oc2", "oc2b", "oc3", "os", "p",
-                                         "d", "m", "mb", "mc", "md", "m2", "m2b", "m2c", "m2d"
+                                         "d", "m", "mb", "mc", "md", "m2", "m2b", "m2c", "m2d",
                                          "test"
                                          ), type=str)
     parser.add_argument('-skip_arcpy_check', action='store_true',
@@ -240,55 +240,50 @@ if __name__ == '__main__':
             o2(the_scenario, logger)
 
         # optional step to solve and save pulp problem from pickle
-        elif args.task == 'o2b':
+        elif args.task in ['o2b']:
             from ftot_pulp import o2b
             o2b(the_scenario, logger)
 
         # optimization option - processor candidates generation
-        elif args.task == 'oc1':
+        elif args.task in ['oc1']:
             from ftot_pulp_candidate_generation import oc1
             oc1(the_scenario, logger)
 
         # optimization option - processor candidates generation
-        elif args.task == 'oc2':
+        elif args.task in ['oc2']:
             from ftot_pulp_candidate_generation import oc2
             oc2(the_scenario, logger)
 
-        elif args.task == 'oc3':
+        elif args.task in ['oc3']:
             from ftot_pulp_candidate_generation import oc3
             oc3(the_scenario, logger)
 
         # optional step to solve and save pulp problem from pickle
-        elif args.task == 'oc2b':
+        elif args.task in ['oc2b']:
             from ftot_pulp import oc2b
             oc2b(the_scenario, logger)
 
-        # post-optimization tracking for source based on existing optimal solution
-        elif args.task in ['os', 'bscoe']:
-            from ftot_pulp_sourcing import o_sourcing
-            o_sourcing(the_scenario, logger)
-
         # post-process the optimal solution
-        elif args.task in ["p", "p2"]:
+        elif args.task in ['p', 'p2']:
             from ftot_postprocess import route_post_optimization_db
             route_post_optimization_db(the_scenario, logger)
 
         # data report
-        elif args.task == "d":
+        elif args.task in ['d']:
             from ftot_report import generate_reports
             generate_reports(the_scenario, logger)
 
         # currently m step has three basemap alternatives-- see key above
-        elif args.task in ["m", "mb", "mc", "md"]:
+        elif args.task in ['m', 'mb', 'mc', 'md']:
             from ftot_maps import new_map_creation
             new_map_creation(the_scenario, logger, args.task)
 
         # currently m2 step has three basemap alternatives-- see key above
-        elif args.task in ["m2", "m2b", "m2c", "m2d"]:
+        elif args.task in ['m2', 'm2b', 'm2c', 'm2d']:
             from ftot_maps import prepare_time_commodity_subsets_for_mapping
             prepare_time_commodity_subsets_for_mapping(the_scenario, logger, args.task)
 
-        elif args.task == "test":
+        elif args.task in ['test']:
             logger.info("in the test case")
             import pdb
             pdb.set_trace()

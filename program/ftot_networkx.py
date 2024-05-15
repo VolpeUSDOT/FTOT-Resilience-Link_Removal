@@ -8,17 +8,15 @@
 
 import networkx as nx
 import sqlite3
-from shutil import rmtree
 import datetime
 import ftot_supporting
-import arcpy
 import os
 import multiprocessing
 import math
 import csv
 from heapq import heappush, heappop
 from itertools import count
-from ftot_pulp import commodity_mode_setup
+from six import iteritems
 from ftot import Q_
 
 # -----------------------------------------------------------------------------
@@ -28,9 +26,6 @@ def graph(the_scenario, logger):
 
     # check for permitted modes before creating nX graph
     check_permitted_modes(the_scenario, logger)
-
-    # export the assets from GIS export_fcs_from_main_gdb
-    export_fcs_from_main_gdb(the_scenario, logger)
 
     # create the networkx multidigraph
     G = make_networkx_graph(the_scenario, logger)
@@ -47,22 +42,8 @@ def graph(the_scenario, logger):
     # generate shortest paths through the network
     presolve_network(the_scenario, G, logger)
 
-    # eliminate the graph and related shape files before moving on
-    delete_shape_files(the_scenario, logger)
+    # eliminate the graph before moving on
     G = nx.null_graph()
-
-
-# -----------------------------------------------------------------------------
-
-
-def delete_shape_files(the_scenario, logger):
-    # Normal FTOT operations delete temporary files
-    # <<>> For Resilience Link Removal Tool, we will keep all the shapefiles, as these are needed for link removal <<>>
-    # logger.debug("start: delete the temp_networkx_shp_files dir")
-    # input_path = the_scenario.networkx_files_dir
-    # rmtree(input_path)
-    # logger.debug("finish: delete the temp_networkx_shp_files dir")
-    return
 
 
 # -----------------------------------------------------------------------------
@@ -71,7 +52,6 @@ def delete_shape_files(the_scenario, logger):
 # Scan the XML and input_data to ensure that pipelines are permitted and relevant
 def check_permitted_modes(the_scenario, logger):
     logger.debug("start: check permitted modes")
-    commodity_mode_dict = commodity_mode_setup(the_scenario, logger)
     with sqlite3.connect(the_scenario.main_db) as db_cur:
         # get pipeline records with an allow_yn == y
         sql = "select * from commodity_mode where mode like 'pipeline%' and allowed_yn like 'y';"
@@ -102,11 +82,12 @@ def make_networkx_graph(the_scenario, logger):
     logger.info("start: make_networkx_graph")
     start_time = datetime.datetime.now()
 
-    # read the shapefiles in the customized read_shp method
-    input_path = the_scenario.networkx_files_dir
+    # read the file geodatabase feature classes in the customized read_gdb method
+    main_gdb = the_scenario.main_gdb
 
-    logger.debug("start: read_shp")
-    G = read_shp(input_path, logger, simplify=True,
+    logger.debug("start: read_gdb")
+
+    G = read_gdb(main_gdb, logger, the_scenario, simplify=True,
                  geom_attrs=False, strict=True)  # note this is custom and not nx.read_shp()
 
     # clean up the node labels
@@ -153,7 +134,7 @@ def presolve_network(the_scenario, G, logger):
         db_cur.execute(sql)
 
         sql = """
-            create table if not exists shortest_edges (from_node_id INT, to_node_id INT, edge_id INT,
+            create table if not exists shortest_edges (from_node_id INT, to_node_id INT, edge_id INT, 
             CONSTRAINT unique_from_to_edge_id_tuple UNIQUE (from_node_id, to_node_id, edge_id));
             """
         db_cur.execute(sql)
@@ -215,7 +196,7 @@ def presolve_network(the_scenario, G, logger):
     # by commodity and destination
     for commodity_id in od_pairs:
         phase_of_matter = od_pairs[commodity_id]['phase_of_matter']
-        allowed_modes = commodity_subgraph_dict[commodity_id]['modes']
+        allowed_modes = commodity_subgraph_dict[commodity_id]['modes'] 
 
         if 'targets' in od_pairs[commodity_id].keys():
             for a_target in od_pairs[commodity_id]['targets'].keys():
@@ -223,7 +204,7 @@ def presolve_network(the_scenario, G, logger):
                                     od_pairs[commodity_id]['targets'][a_target],
                                     a_target, all_route_edges, no_path_pairs,
                                     edge_id_dict, phase_of_matter, allowed_modes, 'target'])
-        else:
+        else:    
             for a_source in od_pairs[commodity_id]['sources'].keys():
                 if 'facility_subgraphs' in commodity_subgraph_dict[commodity_id].keys():
                     subgraph = commodity_subgraph_dict[commodity_id]['facility_subgraphs'][a_source]
@@ -386,6 +367,10 @@ def multi_shortest_paths(stuff_to_pass):
 # which mirrors the cost of each edge for the optimizer
 def nx_graph_weighting(the_scenario, G, phases_of_matter_in_scenario, logger):
 
+    # get emission factors
+    from ftot_supporting_gis import make_emission_factors_dict
+    factors_dict = make_emission_factors_dict(the_scenario, logger) # keyed off of mode, vehicle label, pollutant, link type
+
     # pull the route cost for all edges in the graph
     logger.debug("start: assign edge weights to networkX graph")
     for phase_of_matter in phases_of_matter_in_scenario:
@@ -400,58 +385,157 @@ def nx_graph_weighting(the_scenario, G, phases_of_matter_in_scenario, logger):
         length = G.edges[(u, v, c)]['Length']
         source = G.edges[(u, v, c)]['source']
         artificial = G.edges[(u, v, c)]['Artificial']
-
-        # calculate route_cost for all edges and phases of matter to mirror network costs in db
+        if source == 'road':
+            urban = G.edges[(u, v, c)]['Urban_Rural']
+            limited_access = G.edges[(u, v, c)]['Limited_Access']
+        else:
+            urban = None
+            limited_access = None
+         
+        # calculate route_cost and co2 cost for all edges and phases of matter to mirror network costs in db
         for phase_of_matter in phases_of_matter_in_scenario:
-            weight = get_network_link_cost(the_scenario, phase_of_matter, source, artificial, logger)
-            if 'pipeline' not in source:
-                if artificial == 0:
-                    G.edges[(u, v, c)]['{}_weight'.format(phase_of_matter)] = length * route_cost_scaling * weight
-
-                elif artificial == 1:
-                    #  note: here 'weight' is the truck base cost and 'route_cost_scaling' is the local road impedance value
-
-                    if source == "rail" and phase_of_matter == "solid":
-                        penalty = (the_scenario.solid_truck_base_cost * route_cost_scaling - the_scenario.solid_railroad_class_1_cost) * the_scenario.rail_short_haul_penalty
-                        G.edges[(u, v, c)]['{}_weight'.format(phase_of_matter)] = length * route_cost_scaling * weight + penalty.magnitude/2
-
-                    elif source == "rail" and phase_of_matter == "liquid":
-                        penalty = (the_scenario.liquid_truck_base_cost * route_cost_scaling - the_scenario.liquid_railroad_class_1_cost) * the_scenario.rail_short_haul_penalty
-                        G.edges[(u, v, c)]['{}_weight'.format(phase_of_matter)] = length * route_cost_scaling * weight + penalty.magnitude/2
-
-                    elif source == "water" and phase_of_matter == "solid":
-                        penalty = (the_scenario.solid_truck_base_cost * route_cost_scaling - the_scenario.solid_barge_cost) * the_scenario.water_short_haul_penalty
-                        G.edges[(u, v, c)]['{}_weight'.format(phase_of_matter)] = length * route_cost_scaling * weight + penalty.magnitude/2
-
-                    elif source == "water" and phase_of_matter == "liquid":
-                        penalty = (the_scenario.liquid_truck_base_cost * route_cost_scaling - the_scenario.liquid_barge_cost) * the_scenario.water_short_haul_penalty
-                        G.edges[(u, v, c)]['{}_weight'.format(phase_of_matter)] = length * route_cost_scaling * weight + penalty.magnitude/2
-
-
-                    else:
-                        # road, no penalty
-                        G.edges[(u, v, c)]['{}_weight'.format(phase_of_matter)] = length * route_cost_scaling * weight
-
-
-                elif artificial == 2:
-                    G.edges[(u, v, c)]['{}_weight'.format(phase_of_matter)] = weight / 2.00
-                else:
-                    logger.warning("artificial code of {} is not supported!".format(artificial))
-            else:
-                # inflate the cost of pipelines for 'solid' to avoid forming a shortest path with them
-                if phase_of_matter == 'solid':
-                    G.edges[(u, v, c)]['{}_weight'.format(phase_of_matter)] = 1000000
-                else:
-                    if artificial == 0:
-                        G.edges[(u, v, c)]['{}_weight'.format(phase_of_matter)] = route_cost_scaling
-                    elif artificial == 1:
-                        G.edges[(u, v, c)]['{}_weight'.format(phase_of_matter)] = length * weight * route_cost_scaling # matches road
-                    elif artificial == 2:
-                        G.edges[(u, v, c)]['{}_weight'.format(phase_of_matter)] = weight / 2.00
-                    else:
-                        logger.warning("artificial code of {} is not supported!".format(artificial))
+            edge_costs = get_link_costs(the_scenario, factors_dict, length, phase_of_matter, source, route_cost_scaling, urban, limited_access, artificial, logger)
+            G.edges[(u, v, c)]['{}_weight'.format(phase_of_matter)] = edge_costs[0]
 
     logger.debug("end: assign edge weights to networkX graph")
+
+
+# -----------------------------------------------------------------------------
+
+def get_link_costs(the_scenario, factors_dict, length, phase_of_matter, mode_source, route_cost_scaling, urban, limited_access, artificial, logger):
+    # returns routing cost (combining impeded transport cost and carbon cost), transport cost,
+    #    impeded transport cost, and carbon cost
+    
+    # if phase is solid and mode is pipeline, pass on arbitrarily high values
+    # DB will skip, graph will set to returned value 
+    if phase_of_matter == 'solid' and 'pipeline' in mode_source:
+        hi_val = 999999999
+        return hi_val, hi_val, hi_val, hi_val
+
+    # load weights (0-1) for each component of routing cost
+    transport_weight = the_scenario.transport_cost_scalar
+    co2_weight = the_scenario.co2_cost_scalar
+
+    # default costs for routing and CO2 are in USD / ton-mi
+    link_transport_cost = get_link_transport_cost(the_scenario, phase_of_matter, mode_source, artificial, logger)
+    link_co2_cost = get_link_co2_cost(the_scenario, factors_dict, phase_of_matter, mode_source, artificial, urban, limited_access, logger)
+    
+    # co2 cost
+    co2_cost = length * link_co2_cost
+
+    if artificial == 0:
+        # road, rail, and water
+        if 'pipeline' not in mode_source:
+            transport_cost = length * link_transport_cost  # link_cost is taken from the scenario file
+            transport_routing_cost = transport_cost * route_cost_scaling
+            
+        else:
+            # if artificial = 0, route_cost_scaling = base rate
+            # we use the route_cost_scaling for this since its set in the GIS
+            # not in the scenario xml file.
+
+            transport_cost = route_cost_scaling  # this is the base rate
+            transport_routing_cost = route_cost_scaling
+
+    elif artificial == 1:
+
+        # use road transport cost for first/last mile regardless of mode
+        transport_cost = length * link_transport_cost 
+
+        # set short haul penalty for rail and water
+        if mode_source == "rail" and phase_of_matter == "solid":
+            penalty = ((the_scenario.solid_truck_base_cost * route_cost_scaling - the_scenario.solid_railroad_class_1_cost) * the_scenario.rail_short_haul_penalty).magnitude
+        elif mode_source == "rail" and phase_of_matter == "liquid":
+            penalty = ((the_scenario.liquid_truck_base_cost * route_cost_scaling - the_scenario.liquid_railroad_class_1_cost) * the_scenario.rail_short_haul_penalty).magnitude
+        elif mode_source == "water" and phase_of_matter == "solid":
+            penalty = ((the_scenario.solid_truck_base_cost * route_cost_scaling - the_scenario.solid_barge_cost) * the_scenario.water_short_haul_penalty).magnitude
+        elif mode_source == "water" and phase_of_matter == "liquid":
+            penalty = ((the_scenario.liquid_truck_base_cost * route_cost_scaling - the_scenario.liquid_barge_cost) * the_scenario.water_short_haul_penalty).magnitude
+        else:
+            # road or pipeline: no short hual penalty
+            penalty = 0
+        
+        # routing cost for artificial links
+        transport_routing_cost = transport_cost * route_cost_scaling + penalty/2
+
+    elif artificial == 2:
+        transport_cost = link_transport_cost / 2.00  # this is the transloading fee
+        # For now dividing by 2 to ensure that the transloading fee is not applied twice
+        # (e.g. on way in and on way out)
+        transport_routing_cost = link_transport_cost / 2.00
+        # TO DO - how to handle artificial=2
+
+    else:
+        logger.warning("artificial code of {} is not supported!".format(artificial))
+    
+    route_cost = transport_weight * transport_routing_cost + co2_weight * co2_cost
+
+    return route_cost, transport_cost, transport_routing_cost, co2_cost
+# -----------------------------------------------------------------------------
+
+
+def check_modes_candidate_generation(the_scenario, logger): 
+    # this method checks whether there are different modes between the input commodity/ies
+    # and output commodity/ies of a candidate process and returns a dictionary keyed
+    # by process id of which modes' intermodal facilities should be selected as endcaps
+    # We only pick modes that aren't available to all commodities, and will only select
+    # intermodal facilities that move between two of such modes, since other mode switches
+    # can happen at other places in the network.
+
+    # if commodity mode is not supplied, then all processes have symmetrical mode availability
+    if not os.path.exists(the_scenario.commodity_mode_data):
+        return {}
+     
+    # pull commodity mode and process data from DB
+    logger.debug("start: pull commodity mode & candidate process from SQL")
+    with sqlite3.connect(the_scenario.main_db) as db_cur:
+        sql = """select 
+            cpc.process_id,
+            cpc.commodity_id,
+            cm.mode
+            from commodity_mode cm
+            join candidate_process_commodities cpc
+            on cm.commodity_id = cpc.commodity_id
+            where cm.allowed_yn like 'y';"""
+        commodity_mode_data = db_cur.execute(sql).fetchall()
+    
+        logger.debug("end: pull commodity mode from SQL")
+
+    # add commodities to two dictionaries:
+    # diff modes[process_id][mode] - lists of modes available to some but not all commodities for a process
+    # candidate_processes[process_id] - lists of commodity ids involved in each process
+    diff_modes = {}
+    candidate_processes = {}
+    for row in commodity_mode_data:
+        process_id = int(row[0])
+        commodity_id = int(row[1])
+        mode = row[2]
+        
+        if process_id not in diff_modes :
+            diff_modes[process_id] = {}
+        if mode not in diff_modes[process_id] :
+            diff_modes[process_id][mode] = []
+        diff_modes[process_id][mode].append(commodity_id)
+
+        if process_id not in candidate_processes :
+            candidate_processes[process_id] = []
+        if commodity_id not in candidate_processes[process_id]:
+            candidate_processes[process_id].append(commodity_id)
+
+    # remove modes that are available to all commodities in a process
+    to_remove = []
+    for process, modes in diff_modes.items() :
+        for mode, commodity_ids in modes.items() :
+            commodity_ids.sort()
+            candidate_processes[process].sort()
+            if commodity_ids == candidate_processes[process] :
+                # del diff_modes[process][mode]
+                to_remove.append((process,mode))
+
+    for (process, mode) in to_remove :
+        del diff_modes[process][mode]
+
+    return diff_modes
 
 
 # -----------------------------------------------------------------------------
@@ -557,7 +641,7 @@ def make_od_pairs(the_scenario, logger):
         sql = '''
         create table od_pairs(scenario_rt_id INTEGER PRIMARY KEY, from_location_id integer, to_location_id integer,
         from_facility_id integer, to_facility_id integer, commodity_id integer, phase_of_matter text, route_status text,
-        from_node_id INTEGER, to_node_id INTEGER, from_location_1 INTEGER, to_location_1 INTEGER);
+        from_node_id INTEGER, to_node_id INTEGER, from_location_id_name INTEGER, to_location_id_name INTEGER);
         '''
         db_cur.execute(sql)
 
@@ -577,7 +661,7 @@ def make_od_pairs(the_scenario, logger):
         facility_commodities.io,
         commodities.phase_of_matter,
         networkx_nodes.node_id,
-        networkx_nodes.location_1
+        networkx_nodes.location_id_name
         from facilities
         join facility_commodities on
         facility_commodities.facility_id = facilities.facility_ID
@@ -605,8 +689,8 @@ def make_od_pairs(the_scenario, logger):
         origin.phase_of_matter AS phase_of_matter,
         origin.node_id AS from_node_id,
         destination.node_id AS to_node_id,
-        origin.location_1 AS from_location_1,
-        destination.location_1 AS to_location_1
+        origin.location_id_name AS from_location_id_name,
+        destination.location_id_name AS to_location_id_name
         from
         tmp_connected_facilities_with_commodities as origin
         inner join
@@ -626,8 +710,8 @@ def make_od_pairs(the_scenario, logger):
         and
         destination.facility_type <> "raw_material_producer_as_processor"  -- restrict other destination types  TODO - MNP - 12/6/17 MAY NOT NEED THIS IF WE MAKE TEMP CANDIDATES AS THE RMP
         and
-        origin.location_1 like '%_OUT' 									   -- restrict to the correct out/in node_id's
-        AND destination.location_1 like '%_IN'
+        origin.location_id_name like '%_OUT' 									   -- restrict to the correct out/in node_id's
+        AND destination.location_id_name like '%_IN'
         ELSE -- THE CASE WHEN PROCESSORS ARE SENDING STUFF TO OTHER PROCESSORS
         origin.io = 'o' 													-- make sure processors origins send outputs
         and
@@ -643,8 +727,8 @@ def make_od_pairs(the_scenario, logger):
         and
         destination.facility_type <> "raw_material_producer_as_processor"  -- restrict other destination types  TODO - MNP - 12/6/17 MAY NOT NEED THIS IF WE MAKE TEMP CANDIDATES AS THE RMP
         and
-        origin.location_1 like '%_OUT' 									   -- restrict to the correct out/in node_id's
-        AND destination.location_1 like '%_IN'
+        origin.location_id_name like '%_OUT' 									   -- restrict to the correct out/in node_id's
+        AND destination.location_id_name like '%_IN'
         END;
         '''
         db_cur.execute(sql)
@@ -657,10 +741,10 @@ def make_od_pairs(the_scenario, logger):
 
             sql = "drop table if exists tmp_endcap_to_other;"
             db_cur.execute(sql)
-
+            
             sql = '''
             create table tmp_rmp_to_endcap as
-            select en.node_id as endcap_node,
+            select distinct en.node_id as endcap_node,
             en.commodity_id,
             origin.location_id as rmp_location,
             origin.facility_id as rmp_facility,
@@ -700,14 +784,14 @@ def make_od_pairs(the_scenario, logger):
             join tmp_connected_facilities_with_commodities tmp on
             fc.facility_id = tmp.facility_id
             and tmp.io = 'i'
-            and tmp.location_1 like '%_in'
+            and tmp.location_id_name like '%_in'
             ;
             '''
             db_cur.execute(sql)
 
         sql = '''
-        insert into od_pairs (from_location_id, to_location_id, from_facility_id, to_facility_id, commodity_id,
-        phase_of_matter, from_node_id, to_node_id, from_location_1, to_location_1)
+        insert into od_pairs (from_location_id, to_location_id, from_facility_id, to_facility_id, commodity_id, 
+        phase_of_matter, from_node_id, to_node_id, from_location_id_name, to_location_id_name)
         select distinct
         odp.from_location_id,
         odp.to_location_id,
@@ -717,8 +801,8 @@ def make_od_pairs(the_scenario, logger):
         odp.phase_of_matter,
         odp.from_node_id,
         odp.to_node_id,
-        odp.from_location_1,
-        odp.to_location_1
+        odp.from_location_id_name,
+        odp.to_location_id_name
         from tmp_od_pairs odp
         inner join networkx_edges ne1 on
         odp.from_node_id = ne1.from_node_id
@@ -836,7 +920,7 @@ def make_od_pairs(the_scenario, logger):
             if target not in od_pairs[commodity_id]['sources'][source].keys():
                 od_pairs[commodity_id]['sources'][source][target] = []
             od_pairs[commodity_id]['sources'][source][target].append(scenario_rt_id)
-
+    
     return od_pairs
 
 
@@ -844,21 +928,21 @@ def make_od_pairs(the_scenario, logger):
 
 
 def make_max_transport_distance_subgraphs(the_scenario, logger, commodity_subgraph_dict):
-
+    
     # Get facility, commodity, and MTD info from the db
     logger.info("start: pull facility/commodity MTD from SQL")
     with sqlite3.connect(the_scenario.main_db) as db_cur:
         sql = """select cm.commodity_id, nn.node_id, c.max_transport_distance, f.facility_type_id, fc.io
                from commodity_mode cm
-               join facility_commodities fc on cm.commodity_id = fc.commodity_id
+               join facility_commodities fc on cm.commodity_id = fc.commodity_id 
                join facilities f on fc.facility_id = f.facility_id  --likely need facility's node id from od_pairs instead
                join networkx_nodes nn on nn.location_id = f.location_id
                join commodities c on cm.commodity_id = c.commodity_id
-               where cm.allowed_yn like 'Y'
-               and fc.io = 'o'
-               and nn.location_1 like '%_out'
+               where cm.allowed_yn like 'Y' 
+               and fc.io = 'o' 
+               and nn.location_id_name like '%_out'
                and f.ignore_facility = 'false'
-			   group by nn.node_id;"""
+			   group by cm.commodity_id, nn.node_id, c.max_transport_distance, f.facility_type_id, fc.io;"""
         commodity_mtd_data = db_cur.execute(sql).fetchall()
 
         # Populate the od_pairs table from a temporary table that collects both origins and destinations
@@ -877,7 +961,7 @@ def make_max_transport_distance_subgraphs(the_scenario, logger, commodity_subgra
         facility_commodities.io,
         commodities.phase_of_matter,
         networkx_nodes.node_id,
-        networkx_nodes.location_1
+        networkx_nodes.location_id_name
         from facilities
         join facility_commodities on
         facility_commodities.facility_id = facilities.facility_ID
@@ -907,20 +991,23 @@ def make_max_transport_distance_subgraphs(the_scenario, logger, commodity_subgra
 
     if mtd_count == 0:
         return commodity_subgraph_dict
-
+    
     if not os.path.exists(the_scenario.processor_candidates_commodity_data) and the_scenario.processors_candidate_slate_data != 'None':
+        # get destination facility information
         with sqlite3.connect(the_scenario.main_db) as db_cur:
             sql = '''
             select
+            cp_i.process_id,  
             cp_i.commodity_id,
+            cp_o.commodity_id,
             dest.node_id
-            from
-            candidate_process_commodities as cp_i
-            join
+            from 
+            candidate_process_commodities as cp_i 
+            join 
             candidate_process_commodities as cp_o
-            on
+            on 
             cp_i.io = 'i'
-            and
+            and 
             cp_o.io = 'o'
             and
             cp_i.process_id = cp_o.process_id
@@ -928,21 +1015,62 @@ def make_max_transport_distance_subgraphs(the_scenario, logger, commodity_subgra
             tmp_connected_facilities_with_commodities as dest
             on
             dest.commodity_id = cp_o.commodity_id
-            and
+            and 
             dest.io = 'i'
             AND
-            dest.location_1 like '%_IN'
+            dest.location_id_name like '%_IN'
             '''
             dest_facility_data = db_cur.execute(sql).fetchall()
-
+        
+        candidate_processes = {}
         for row in dest_facility_data:
-            i_commodity_id = int(row[0])
-            dest_facility_node_id = int(row[1])
+            process_id = int(row[0])
+            i_commodity_id = int(row[1])
+            o_commodity_id = int(row[2])
+            dest_facility_node_id = int(row[3])
+            if process_id not in candidate_processes:
+                candidate_processes[process_id] = []
+            if i_commodity_id not in candidate_processes[process_id]:
+                candidate_processes[process_id].append(i_commodity_id)
             if 'dest_facilities' not in commodity_subgraph_dict[i_commodity_id]:
                 commodity_subgraph_dict[i_commodity_id]['dest_facilities'] = []
-            dest_adjacent_nodes = commodity_subgraph_dict[commodity_id]['subgraph'].predecessors(dest_facility_node_id)
+            # get dest adjacent nodes from the output commodity's subgraph - 
+            dest_adjacent_nodes = commodity_subgraph_dict[o_commodity_id]['subgraph'].predecessors(dest_facility_node_id)
             commodity_subgraph_dict[i_commodity_id]['dest_facilities'].extend(list(dest_adjacent_nodes))
 
+        # get other mode information
+        diff_modes = check_modes_candidate_generation(the_scenario, logger)
+
+        with sqlite3.connect(the_scenario.main_db) as db_cur:
+            if len(diff_modes.keys()) > 0 :
+                for process_id, modes in diff_modes.items():
+                    for mode, commodity_ids in diff_modes.items() :    
+                        # pull relevant intermodal nodes from the DB
+                        sql = """select 
+                        nn.node_id,
+                        ne1.mode_source,
+                        ne2.mode_source
+                        from networkx_edges ne1 
+                        join networkx_edges ne2
+                        on ne1.to_node_id = ne2.from_node_id
+                        join networkx_nodes nn
+                        on ne1.to_node_id = nn.node_id
+                        where nn.source = "intermodal" 
+                        and ne1.mode_source in ({}) 
+                        and ne2.mode_source in ({}) 
+                        and ne1.mode_source != ne2.mode_source;""".format(str(list(modes.keys()))[1:-1],str(list(modes.keys()))[1:-1])
+
+                        node_mode_data = db_cur.execute(sql).fetchall()
+
+                        for row in node_mode_data:
+                            node_id = row[0]
+                            in_edge_mode = row[1]
+                            out_edge_mode = row[2]
+                            for commodity_id in candidate_processes[process_id] :
+                                if 'intermodal_facilities' not in commodity_subgraph_dict[commodity_id]:
+                                    commodity_subgraph_dict[commodity_id]['intermodal_facilities'] = []
+                                if node_id not in commodity_subgraph_dict[commodity_id]['intermodal_facilities'] :
+                                    commodity_subgraph_dict[commodity_id]['intermodal_facilities'].append(node_id)
 
     # Store nodes that can be reached from an RMP with MTD
     ends = {}
@@ -954,7 +1082,7 @@ def make_max_transport_distance_subgraphs(the_scenario, logger, commodity_subgra
                 # If 'facility_subgraphs' dictionary for commodity_subgraph_dict[commodity_id] doesn't exist, add it
                 if 'facility_subgraphs' not in commodity_subgraph_dict[commodity_id]:
                     commodity_subgraph_dict[commodity_id]['facility_subgraphs'] = {}
-
+                
                 # Use shortest path to find the nodes that are within MTD
                 logger.info("start: dijkstra for facility node ID " + str(facility_node_id))
                 G = commodity_subgraph_dict[commodity_id]['subgraph']
@@ -966,24 +1094,28 @@ def make_max_transport_distance_subgraphs(the_scenario, logger, commodity_subgra
                 distances, endcaps = dijkstra(G, facility_node_id, fn_length, cutoff=MTD)
 
                 logger.info("start: distances/paths for facility node ID " + str(facility_node_id))
-
+                
                 # Creates a subgraph of the nodes and edges that are reachable from the facility
                 commodity_subgraph_dict[commodity_id]['facility_subgraphs'][facility_node_id] = G.subgraph(distances.keys()).copy()
 
                 # If in G1 step for candidate generation, find endcaps
                 if not os.path.exists(the_scenario.processor_candidates_commodity_data) and the_scenario.processors_candidate_slate_data != 'None':
-                    ends[facility_node_id] = {}
-                    ends[facility_node_id]['ends'] = endcaps
-                    ends[facility_node_id]['ends'].extend([node for node in commodity_subgraph_dict[commodity_id]['dest_facilities'] if node in commodity_subgraph_dict[commodity_id]['facility_subgraphs'][facility_node_id]])
-                    # for node in commodity_subgraph_dict[commodity_id]['dest_facilities']:
-                    #     if node in commodity_subgraph_dict[commodity_id]['facility_subgraphs'][facility_node_id] :
-                    #         ends[facility_node_id]['ends'].append(node)
-                    ends[facility_node_id]['commodity_id'] = commodity_id
+                    # Only create endcaps if commodity at facility is an input for a candidate process
+                    if any(commodity_id in val for val in candidate_processes.values()):
+                        ends[facility_node_id] = {}
+                        ends[facility_node_id]['ends'] = endcaps
+                        ends[facility_node_id]['ends'].extend([node for node in commodity_subgraph_dict[commodity_id]['dest_facilities'] if node in commodity_subgraph_dict[commodity_id]['facility_subgraphs'][facility_node_id]])
+                        if 'intermodal_facilities' in commodity_subgraph_dict[commodity_id]:
+                            ends[facility_node_id]['ends'].extend([node for node in commodity_subgraph_dict[commodity_id]['intermodal_facilities'] if node in commodity_subgraph_dict[commodity_id]['facility_subgraphs'][facility_node_id]])
+                        # for node in commodity_subgraph_dict[commodity_id]['dest_facilities']:
+                        #     if node in commodity_subgraph_dict[commodity_id]['facility_subgraphs'][facility_node_id] :
+                        #         ends[facility_node_id]['ends'].append(node)
+                        ends[facility_node_id]['commodity_id'] = commodity_id     
 
                 logger.info("end: distances/paths for facility node ID " + str(facility_node_id))
 
     # If in G1 step for candidate generation, add endcaps to endcap_nodes table
-    if not os.path.exists(the_scenario.processor_candidates_commodity_data) and the_scenario.processors_candidate_slate_data != 'None':
+    if not os.path.exists(the_scenario.processor_candidates_commodity_data) and the_scenario.processors_candidate_slate_data != 'None':                 
         with sqlite3.connect(the_scenario.main_db) as db_cur:
             # Create temp table to hold endcap nodes
             sql = """
@@ -1011,7 +1143,7 @@ def make_max_transport_distance_subgraphs(the_scenario, logger, commodity_subgra
                              values({}, NULL, NULL, {}, {}, NULL);""".format(end_list[i], facility_node_id, commodity_id)
                     db_cur.execute(sql)
                     db_cur.commit()
-
+            
             sql = """alter table tmp_endcap_nodes
                      add column source_facility_id;"""
             db_cur.execute(sql)
@@ -1024,7 +1156,7 @@ def make_max_transport_distance_subgraphs(the_scenario, logger, commodity_subgra
                                                      join facilities f on f.location_id = n.location_id) temp
 									           where tmp_endcap_nodes.source_node_id = temp.source_node_id)"""
             db_cur.execute(sql)
-
+            
             sql = """drop table if exists endcap_nodes;"""
             db_cur.execute(sql)
 
@@ -1040,7 +1172,7 @@ def make_max_transport_distance_subgraphs(the_scenario, logger, commodity_subgra
                 shape_x integer,
                 shape_y integer,
                 destination_yn text,
-                CONSTRAINT endcap_key PRIMARY KEY (node_id, source_facility_id, commodity_id))
+                CONSTRAINT endcap_key PRIMARY KEY (node_id, source_facility_id, commodity_id, process_id))
             ;"""
             db_cur.execute(sql)
 
@@ -1141,48 +1273,11 @@ def dijkstra(G, source, get_weight, pred=None, paths=None, cutoff=None,
             elif vu_dist == seen[u]:
                 if pred is not None:
                     pred[u].append(v)
-
+        
         if added == 0 and too_far >= 1:  # MARK MOD
             endcaps.append(v)  # MARK MOD
 
     return (dist, endcaps)  # MARK MOD
-
-
-# -----------------------------------------------------------------------------
-
-
-def export_fcs_from_main_gdb(the_scenario, logger):
-    # export fcs from the main.GDB to individual shapefiles
-    logger.info("start: export_fcs_from_main_gdb")
-    start_time = datetime.datetime.now()
-
-    # export network and locations fc's to shapefiles
-    main_gdb = the_scenario.main_gdb
-    output_path = the_scenario.networkx_files_dir
-    input_features = []
-
-    logger.debug("start: create temp_networkx_shp_files dir")
-    if os.path.exists(output_path):
-        logger.debug("deleting pre-existing temp_networkx_shp_files dir")
-        rmtree(output_path)
-
-    if not os.path.exists(output_path):
-        logger.debug("creating new temp_networkx_shp_files dir")
-        os.makedirs(output_path)
-
-    location_list = ['\\locations', '\\network\\intermodal', '\\network\\locks']
-
-    # only add shape files associated with modes that are permitted in the scenario file
-    for mode in the_scenario.permittedModes:
-        location_list.append('\\network\\{}'.format(mode))
-
-    # get the locations and network feature layers
-    for fc in location_list:
-        input_features.append(main_gdb + fc)
-    arcpy.FeatureClassToShapefile_conversion(Input_Features=input_features, Output_Folder=output_path)
-
-    logger.debug("finished: export_fcs_from_main_gdb: Runtime (HMS): \t{}".format(
-        ftot_supporting.get_total_runtime_string(start_time)))
 
 
 # ------------------------------------------------------------------------------
@@ -1192,11 +1287,16 @@ def get_impedances(the_scenario, logger):
     rail_impedance_weights_dict = {}
     water_impedance_weights_dict = {}
 
+    if not os.path.exists(the_scenario.impedance_weights_data):
+        logger.warning("Warning: Cannot find impedance_weights_data file. The base cost will be applied to all links.")
+        return road_impedance_weights_dict, rail_impedance_weights_dict, water_impedance_weights_dict
+
+
     with open(the_scenario.impedance_weights_data, 'rt') as f:
         reader = csv.DictReader(f)
         for row in reader:
             mode = str(row["mode"])
-            link_type = str(row["link_type"])
+            link_type = str(row["link_type"]).lower()
             weight = float(row["weight"])
 
             # road
@@ -1232,10 +1332,41 @@ def clean_networkx_graph(the_scenario, G, logger):
     # Create, road, rail, and water impedance dictionaries
     road_impedance_weights_dict, rail_impedance_weights_dict, water_impedance_weights_dict = get_impedances(the_scenario, logger)
 
-    # save highest impedance from non-blank road types
-    # will use this as the route scaling factor for artificial links (all modes) to represent first/last mile by road
-    road_values = [road_impedance_weights_dict[lt] for lt in road_impedance_weights_dict if lt != '']
-    truck_local = max(road_values)
+    # create dictionary with highest impedances for each mode
+    # will use this weight for unrecognized link types
+    # defaults to weight of 1.0 if no user-provided impedances (or other error)
+    # that weight will ultimately be applied to all links not otherwise assigned a category
+    highest_weights_dict = {}
+
+    if 'road' in the_scenario.permittedModes:
+        try:
+            road_values = [road_impedance_weights_dict[lt] for lt in road_impedance_weights_dict]
+            highest_weights_dict['road'] = max(road_values)
+        except:
+            highest_weights_dict['road'] = 1.0 # assume unimpeded
+
+    if 'rail' in the_scenario.permittedModes:
+        try:
+            rail_values = [rail_impedance_weights_dict[lt] for lt in rail_impedance_weights_dict]
+            highest_weights_dict['rail'] = max(rail_values)
+        except:
+            highest_weights_dict['rail'] = 1.0 # assume unimpeded
+
+    if 'water' in the_scenario.permittedModes:
+        try:
+            water_values = [water_impedance_weights_dict[lt] for lt in water_impedance_weights_dict]
+            highest_weights_dict['water'] = max(water_values)
+        except:
+            highest_weights_dict['water'] = 1.0 # assume unimpeded
+
+    # get highest road impedance value for a NON-BLANK link type
+    # will use as the route scaling factor for artificial links (all modes) to represent first/last mile by road
+    # if no road impedance values are available, use 1.0 (unimpeded)
+    try:
+        road_values_nonblank = [road_impedance_weights_dict[lt] for lt in road_impedance_weights_dict if lt != '']
+        truck_local = max(road_values_nonblank)
+    except:
+        truck_local = 1.0 # assume unimpeded
 
     # use the artificial and reversed attribute to determine if
     # the link is kept
@@ -1281,48 +1412,52 @@ def clean_networkx_graph(the_scenario, G, logger):
 
             if mode_type == "rail":
 
-                link_type = G.edges[u, v, keys]["Link_Type"]
+                link_type = str(G.edges[u, v, keys]["Link_Type"]).lower()
                 # Set any nulls to blanks
-                if link_type is None:
+                if link_type is None or link_type == 'none':
                     link_type = ''
                 if link_type in rail_impedance_weights_dict:
                     route_cost_scaling = rail_impedance_weights_dict[link_type]
                 else:
                     # Give it the maximum impedance weight
-                    route_cost_scaling = max(rail_impedance_weights_dict)
-                    logger.debug(("Link_Type {} from OBJECTID {} in {} ".format(link_type, unique_id, mode_type) +
-                                  "does not appear in impedance weight CSV. " +
-                                  "Will be given maximum impedance weight of {} for {}".format(max(rail_impedance_weights_dict), mode_type)))
+                    route_cost_scaling = highest_weights_dict['rail']
+                    if the_scenario.impedance_weights_data != 'None':
+                        logger.debug(("Link_Type {} from OBJECTID {} in {} ".format(link_type, unique_id, mode_type) +
+                                      "does not appear in impedance weight CSV. " +
+                                      "Will be given maximum impedance weight of {} for {}".format(highest_weights_dict['rail'], mode_type)))
 
             elif mode_type == "water":
 
-                link_type = G.edges[u, v, keys]['Link_Type']
+                link_type = str(G.edges[u, v, keys]['Link_Type']).lower()
                 # Set any nulls to blanks
-                if link_type is None:
+                if link_type is None or link_type == 'none':
                     link_type = ''
                 if link_type in water_impedance_weights_dict:
                     route_cost_scaling = water_impedance_weights_dict[link_type]
                 else:
                     # Give it the maximum impedance weight
-                    route_cost_scaling = max(water_impedance_weights_dict)
-                    logger.debug(("Link_Type {} from OBJECTID {} in {} ".format(link_type, unique_id, mode_type) +
+                    route_cost_scaling = highest_weights_dict['water']
+                    if the_scenario.impedance_weights_data != 'None':
+                        logger.debug(("Link_Type {} from OBJECTID {} in {} ".format(link_type, unique_id, mode_type) +
                                   "does not appear in impedance weight CSV. " +
-                                  "Will be given maximum impedance weight of {} for {}".format(max(water_impedance_weights_dict), mode_type)))
+                                  "Will be given maximum impedance weight of {} for {}".format(highest_weights_dict['water'], mode_type)))
 
             elif mode_type == "road":
 
-                link_type = G.edges[u, v, keys]['Link_Type']
+                link_type = str(G.edges[u, v, keys]['Link_Type']).lower()
                 # Set any nulls to blanks
-                if link_type is None:
+
+                if link_type is None or link_type == 'none':
                     link_type = ''
                 if link_type in road_impedance_weights_dict:
                     route_cost_scaling = road_impedance_weights_dict[link_type]
                 else:
                     # Give it the maximum impedance weight
-                    route_cost_scaling = max(road_impedance_weights_dict)
-                    logger.debug(("Link_Type {} from OBJECTID {} in {} ".format(link_type, unique_id, mode_type) +
+                    route_cost_scaling = highest_weights_dict['road']
+                    if the_scenario.impedance_weights_data != 'None':
+                        logger.debug(("Link_Type {} from OBJECTID {} in {} ".format(link_type, unique_id, mode_type) +
                                   "does not appear in impedance weight CSV. " +
-                                  "Will be given maximum impedance weight of {} for {}".format(max(road_impedance_weights_dict), mode_type)))
+                                  "Will be given maximum impedance weight of {} for {}".format(highest_weights_dict['road'], mode_type)))
 
             elif 'pipeline' in mode_type:
                 # convert pipeline tariff costs
@@ -1347,18 +1482,18 @@ def clean_networkx_graph(the_scenario, G, logger):
             # delete edges we dont want
 
             try:
-                if G.edges[u, v, keys]['LOCATION_1'].find("_OUT") > -1 and reversed_link == 1:
+                if G.edges[u, v, keys]['LOCATION_ID_NAME'].find("_OUT") > -1 and reversed_link == 1:
                     G.remove_edge(u, v, keys)
                     deleted_edge_count += 1
                     continue  # move on to the next edge
-                elif G.edges[u, v, keys]['LOCATION_1'].find("_IN") > -1 and reversed_link == 0:
+                elif G.edges[u, v, keys]['LOCATION_ID_NAME'].find("_IN") > -1 and reversed_link == 0:
                     G.remove_edge(u, v, keys)
                     deleted_edge_count += 1
                     continue  # move on to the next edge
 
                 # artificial links are scaled by the local road impedance
                 # use the highest impedance from non-blank road types as a proxy
-                # the cost_penalty is calculated in get_network_link_cost()
+                # the cost_penalty is calculated in get_link_transport_cost()
                 else:
                     route_cost_scaling = truck_local
             except:
@@ -1386,17 +1521,10 @@ def clean_networkx_graph(the_scenario, G, logger):
 # ------------------------------------------------------------------------------
 
 
-def get_network_link_cost(the_scenario, phase_of_matter, mode, artificial, logger):
+def get_link_transport_cost(the_scenario, phase_of_matter, mode, artificial, logger):
     # three types of artificial links:
     # (0 = network edge, 2 = intermodal, 1 = artificial link btw facility location and network edge)
     # add the appropriate cost to the network edges based on phase of matter
-
-    # Create, road, rail, and water impedance dictionaries
-    road_impedance_weights_dict, rail_impedance_weights_dict, water_impedance_weights_dict = get_impedances(the_scenario, logger)
-
-    # Set truck local weight equal to the highest road impedance value, ignoring any blank link types
-    road_values = [road_impedance_weights_dict[lt] for lt in road_impedance_weights_dict if lt != '']
-    truck_local = max(road_values)
 
     if phase_of_matter == "solid":
         # set the mode costs
@@ -1441,6 +1569,70 @@ def get_network_link_cost(the_scenario, phase_of_matter, mode, artificial, logge
 
 # ----------------------------------------------------------------------------
 
+def get_link_co2_cost(the_scenario, factors_dict, phase_of_matter, mode, artificial, urban, limited_access, logger):
+    
+    if artificial == 1:
+        # Uses road emission factor for artificial links regardless of mode
+        # Need to then divide by truck payload to convert g / distance to g / mass-distance
+        co2_factor = factors_dict[mode]['Default']['co2']['artificial']
+        if phase_of_matter == 'solid':
+            co2_factor = co2_factor / the_scenario.truck_load_solid
+        elif phase_of_matter == "liquid":
+            co2_factor = co2_factor / the_scenario.truck_load_liquid
+        else:
+            logger.error("the phase of matter: -- {} -- is not supported. returning")
+            raise NotImplementedError
+    
+    else: # general (not artificial) link types
+
+        if mode != 'road':
+            # rail, water, pipeline
+            co2_factor = factors_dict[mode]['Default']['co2']['general']
+
+        elif mode == 'road':
+            # need to check for detailed road types and then divide by truck payload
+            if urban == -9999 and limited_access == -9999:
+                road_type = 'general'
+            elif urban == 1 and limited_access == -9999:
+                road_type = "urban"
+            elif urban == 0 and limited_access == -9999:
+                road_type = 'rural'
+            elif urban == -9999 and limited_access == 1:
+                road_type = 'limited'
+            elif urban == -9999 and limited_access == 0:
+                road_type = 'nonlimited'
+            elif urban == 1 and limited_access == 1:
+                road_type = 'urban_limited'
+            elif urban == 0 and limited_access == 1:
+                road_type = 'rural_limited'
+            elif urban == 1 and limited_access == 0:
+                road_type = 'urban_nonlimited'
+            elif urban == 0 and limited_access == 0:
+                road_type = 'rural_nonlimited'
+            else:
+                logger.debug("urban_rural: {} or limited_access: {} not recognized. Applying default CO2 factor for this link.".format(urban, limited_access))
+                road_type = 'general'
+
+            # Get appropriate emission factor for "Default" vehicle
+            # Note that co2 optimization is currently incompatible with custom vehicle types,
+            # and FTOT intentionally errors out when reading in emission factors if CO2_Cost_Weight in the XML is greater than 0 (TODO)
+            co2_factor = factors_dict[mode]['Default']['co2'][road_type]
+
+            # Convert g / distance to g / mass-distance
+            if phase_of_matter == 'solid':
+                co2_factor = co2_factor / the_scenario.truck_load_solid
+            elif phase_of_matter == "liquid":
+                co2_factor = co2_factor / the_scenario.truck_load_liquid
+            else:
+                logger.error("the phase of matter: -- {} -- is not supported. returning")
+                raise NotImplementedError
+
+    # calculate co2 unit cost on link in currency units
+    co2_link_cost = (co2_factor * the_scenario.co2_unit_cost).magnitude
+
+    return co2_link_cost
+
+# ----------------------------------------------------------------------------
 
 def get_phases_of_matter_in_scenario(the_scenario, logger):
     logger.debug("start: get_phases_of_matter_in_scenario()")
@@ -1488,7 +1680,7 @@ def set_network_costs_in_db(the_scenario, logger):
         db_con.execute(sql)
 
         sql = "create table if not exists networkx_edge_costs " \
-              "(edge_id INTEGER, phase_of_matter_id INT, route_cost REAL, transport_cost REAL)"
+              "(edge_id INTEGER, phase_of_matter_id INT, route_cost REAL, transport_cost REAL, route_cost_transport REAL, co2_cost REAL)"
         db_con.execute(sql)
 
         # build up the network edges cost by phase of matter
@@ -1497,8 +1689,14 @@ def set_network_costs_in_db(the_scenario, logger):
         # get phases_of_matter in the scenario
         phases_of_matter_in_scenario = get_phases_of_matter_in_scenario(the_scenario, logger)
 
+        # get emission factors
+        from ftot_supporting_gis import make_emission_factors_dict
+        factors_dict = make_emission_factors_dict(the_scenario, logger) # keyed off of mode, vehicle label, pollutant, link type
+        transport_weight = the_scenario.transport_cost_scalar
+        co2_weight = the_scenario.co2_cost_scalar
+
         # loop through each edge in the networkx_edges table
-        sql = "select edge_id, mode_source, artificial, length, route_cost_scaling from networkx_edges"
+        sql = "select edge_id, mode_source, artificial, length, route_cost_scaling, urban, limited_access from networkx_edges"
         db_cur = db_con.execute(sql)
         for row in db_cur:
 
@@ -1507,66 +1705,23 @@ def set_network_costs_in_db(the_scenario, logger):
             artificial = row[2]
             length = row[3]
             route_cost_scaling = row[4]
+            urban = row[5]
+            limited_access = row[6]
 
             for phase_of_matter in phases_of_matter_in_scenario:
-
                 # skip pipeline and solid phase of matter
                 if phase_of_matter == 'solid' and 'pipeline' in mode_source:
                     continue
 
-                # otherwise, go ahead and get the link cost
-                link_cost = get_network_link_cost(the_scenario, phase_of_matter, mode_source, artificial, logger)
-
-                if artificial == 0:
-                    # road, rail, and water
-                    if 'pipeline' not in mode_source:
-                        transport_cost = length * link_cost  # link_cost is taken from the scenario file
-                        route_cost = transport_cost * route_cost_scaling  # this includes impedance
-
-                    else:
-                        # if artificial = 0, route_cost_scaling = base rate
-                        # we use the route_cost_scaling for this since its set in the GIS
-                        # not in the scenario xml file.
-
-                        transport_cost = route_cost_scaling  # this is the base rate
-                        route_cost = route_cost_scaling  # this is the base rate
-
-                elif artificial == 1:
-
-                    # use road transport cost for first/last mile regardless of mode
-                    transport_cost = length * link_cost
-
-                    # set short haul penalty for rail and water
-                    if mode_source == "rail" and phase_of_matter == "solid":
-                        penalty = ((the_scenario.solid_truck_base_cost * route_cost_scaling - the_scenario.solid_railroad_class_1_cost) * the_scenario.rail_short_haul_penalty).magnitude
-                    elif mode_source == "rail" and phase_of_matter == "liquid":
-                        penalty = ((the_scenario.liquid_truck_base_cost * route_cost_scaling - the_scenario.liquid_railroad_class_1_cost) * the_scenario.rail_short_haul_penalty).magnitude
-                    elif mode_source == "water" and phase_of_matter == "solid":
-                        penalty = ((the_scenario.solid_truck_base_cost * route_cost_scaling - the_scenario.solid_barge_cost) * the_scenario.water_short_haul_penalty).magnitude
-                    elif mode_source == "water" and phase_of_matter == "liquid":
-                        penalty = ((the_scenario.liquid_truck_base_cost * route_cost_scaling - the_scenario.liquid_barge_cost) * the_scenario.water_short_haul_penalty).magnitude
-                    else:
-                        # road or pipeline: no short hual penalty
-                        penalty = 0
-
-                    # routing cost for artificial links
-                    route_cost = transport_cost * route_cost_scaling + penalty/2
-
-                elif artificial == 2:
-                    transport_cost = link_cost / 2.00  # this is the transloading fee
-                    # For now dividing by 2 to ensure that the transloading fee is not applied twice
-                    # (e.g. on way in and on way out)
-                    route_cost = link_cost / 2.00  # same as above.
-
-                else:
-                    logger.warning("artificial code of {} is not supported!".format(artificial))
-
-                edge_cost_list.append([edge_id, phase_of_matter, route_cost, transport_cost])
+                link_costs = get_link_costs(the_scenario, factors_dict, length, phase_of_matter, mode_source, route_cost_scaling, urban, limited_access, artificial, logger)
+                route_cost, transport_cost, transport_routing_cost, co2_cost = link_costs
+                
+                edge_cost_list.append([edge_id, phase_of_matter, route_cost, transport_cost, transport_routing_cost, co2_cost])
 
         if edge_cost_list:
             update_sql = """
                 INSERT into networkx_edge_costs
-                values (?,?,?,?)
+                values (?,?,?,?,?,?)
                 ;"""
 
             db_con.executemany(update_sql, edge_cost_list)
@@ -1590,7 +1745,7 @@ def digraph_to_db(the_scenario, G, logger):
         sql = "drop table if exists networkx_nodes"
         db_con.execute(sql)
 
-        sql = "create table if not exists networkx_nodes (node_id INT, source TEXT, source_OID integer, location_1 " \
+        sql = "create table if not exists networkx_nodes (node_id INT, source TEXT, source_OID integer, location_id_name " \
               "TEXT, location_id TEXT, shape_x REAL, shape_y REAL)"
         db_con.execute(sql)
 
@@ -1602,7 +1757,7 @@ def digraph_to_db(the_scenario, G, logger):
         for node in G.nodes():
             source = None
             source_oid = None
-            location_1 = None
+            location_id_name = None
             location_id = None
             shape_x = None
             shape_y = None
@@ -1613,15 +1768,15 @@ def digraph_to_db(the_scenario, G, logger):
             if 'source_OID' in G.nodes[node]:
                 source_oid = G.nodes[node]['source_OID']
 
-            if 'location_1' in G.nodes[node]:  # for locations
-                location_1 = G.nodes[node]['location_1']
-                location_id = G.nodes[node]['location_i']
+            if 'location_id_name' in G.nodes[node]:  # for locations
+                location_id_name = G.nodes[node]['location_id_name']
+                location_id = G.nodes[node]['location_id']
 
             if 'x_y_location' in G.nodes[node]:
                 shape_x = G.nodes[node]['x_y_location'][0]
                 shape_y = G.nodes[node]['x_y_location'][1]
 
-            node_list.append([node, source, source_oid, location_1, location_id, shape_x, shape_y])
+            node_list.append([node, source, source_oid, location_id_name, location_id, shape_x, shape_y])
 
         if node_list:
             update_sql = """
@@ -1644,7 +1799,7 @@ def digraph_to_db(the_scenario, G, logger):
 
         sql = "create table if not exists networkx_edges (edge_id INTEGER PRIMARY KEY, from_node_id INT, to_node_id " \
               "INT, artificial INT, mode_source TEXT, mode_source_oid INT, length REAL, route_cost_scaling REAL, " \
-              "capacity INT, volume REAL, VCR REAL)"
+              "capacity INT, volume REAL, VCR REAL, urban INT, limited_access INT)"
         db_con.execute(sql)
 
         for (u, v, c, d) in G.edges(keys=True, data='route_cost_scaling', default=False):
@@ -1655,7 +1810,7 @@ def digraph_to_db(the_scenario, G, logger):
             mode_source = G.edges[(u, v, c)]['Mode_Type']
             mode_source_oid = G.edges[(u, v, c)]['source_OID']
 
-            if mode_source in ['rail', 'road']:
+            if mode_source in ['rail', 'road', 'water']:
                 volume = G.edges[(u, v, c)]['Volume']
                 vcr = G.edges[(u, v, c)]['VCR']
                 capacity = G.edges[(u, v, c)]['Capacity']
@@ -1664,9 +1819,12 @@ def digraph_to_db(the_scenario, G, logger):
                 vcr = None
                 capacity = None
 
-            if capacity == 0:
-                capacity = None
-                logger.detailed_debug("EDGE: {}, {}, {} - link capacity == 0, setting to None".format(u, v, c))
+            if mode_source == 'road':
+                urban = G.edges[(u, v, c)]['Urban_Rural']
+                limited_access = G.edges[(u, v, c)]['Limited_Access']
+            else:
+                urban = None
+                limited_access = None
 
             if 'route_cost_scaling' in G.edges[(u, v, c)]:
                 route_cost_scaling = G.edges[(u, v, c)]['route_cost_scaling']
@@ -1677,13 +1835,13 @@ def digraph_to_db(the_scenario, G, logger):
 
             edge_list.append(
                 [from_node_id, to_node_id, artificial, mode_source, mode_source_oid, length, route_cost_scaling,
-                 capacity, volume, vcr])
+                 capacity, volume, vcr, urban, limited_access])
 
         # the node_id will be used to explode the edges by commodity and time period
         if edge_list:
             update_sql = """
                 INSERT into networkx_edges
-                values (null,?,?,?,?,?,?,?,?,?,?)
+                values (null,?,?,?,?,?,?,?,?,?,?,?,?)
                 ;"""
             db_con.executemany(update_sql, edge_list)
             db_con.commit()
@@ -1694,81 +1852,377 @@ def digraph_to_db(the_scenario, G, logger):
 # ----------------------------------------------------------------------------
 
 
-def read_shp(path, logger, simplify=True, geom_attrs=True, strict=True):
+def read_gdb(main_gdb, logger, the_scenario, simplify=True, geom_attrs=True, strict=True):
+
     # the modified read_shp() multidigraph code
-    logger.debug("start: read_shp -- simplify: {}, geom_attrs: {}, strict: {}".format(simplify, geom_attrs, strict))
+    logger.debug("start: read_gdb -- simplify: {}, geom_attrs: {}, strict: {}".format(simplify, geom_attrs, strict))
 
     try:
         from osgeo import ogr
     except ImportError:
-        logger.error("read_shp requires OGR: http://www.gdal.org/")
-        raise ImportError("read_shp requires OGR: http://www.gdal.org/")
+        logger.error("read_gdb requires OGR: http://www.gdal.org/")
+        raise ImportError("read_gdb requires OGR: http://www.gdal.org/")
 
-    if not isinstance(path, str):
+    if not isinstance(main_gdb, str):
         return
     net = nx.MultiDiGraph()
-    shp = ogr.Open(path)
-    if shp is None:
-        logger.error("Unable to open {}".format(path))
-        raise RuntimeError("Unable to open {}".format(path))
-    for lyr in shp:
-        count = lyr.GetFeatureCount()
-        logger.debug("processing layer: {} - feature_count: {} ".format(lyr.GetName(), count))
+    gdb = ogr.Open(main_gdb)
+    if gdb is None:
+        logger.error("Unable to open {}".format(main_gdb))
+        raise RuntimeError("Unable to open {}".format(main_gdb))
 
-        fields = [x.GetName() for x in lyr.schema]
-        logger.debug("f's in layer: {}".format(len(lyr)))
-        f_counter = 0
-        time_counter_string = ""
-        for f in lyr:
+    # First add point network feature classes
+    network_fc_list = ['locations', 'intermodal', 'locks']
 
-            f_counter += 1
-            if f_counter % 2000 == 0:
-                time_counter_string += ' .'
+    # Then only add feature classes associated with modes that are permitted in the scenario file
+    for mode in the_scenario.permittedModes:
+        network_fc_list.append(mode)
 
-            if f_counter % 20000 == 0:
-                logger.debug("lyr: {} - feature counter: {} / {}".format(lyr.GetName(), f_counter, count))
-            if f_counter == count:
-                logger.debug("lyr: {} - feature counter: {} / {}".format(lyr.GetName(), f_counter, count))
-                logger.debug(time_counter_string + 'done.')
+    for lyr in gdb:
+        if lyr.GetName() in network_fc_list:
+            count = lyr.GetFeatureCount()
+            logger.debug("processing layer: {} - feature_count: {} ".format(lyr.GetName(), count))
 
-            g = f.geometry()
-            if g is None:
-                if strict:
-                    logger.error("Bad data: feature missing geometry")
-                    raise nx.NetworkXError("Bad data: feature missing geometry")
+            fields = [x.GetName() for x in lyr.schema]
+            logger.debug("f's in layer: {}".format(len(lyr)))
+            f_counter = 0
+            time_counter_string = ""
+            for f in lyr:
+
+                f_counter += 1
+                if f_counter % 2000 == 0:
+                    time_counter_string += ' .'
+
+                if f_counter % 20000 == 0:
+                    logger.debug("lyr: {} - feature counter: {} / {}".format(lyr.GetName(), f_counter, count))
+                if f_counter == count:
+                    logger.debug("lyr: {} - feature counter: {} / {}".format(lyr.GetName(), f_counter, count))
+                    logger.debug(time_counter_string + 'done.')
+
+                g = f.geometry()
+                if g is None:
+                    if strict:
+                        logger.error("Bad data: feature missing geometry")
+                        raise nx.NetworkXError("Bad data: feature missing geometry")
+                    else:
+                        continue
+                fld_data = [f.GetField(f.GetFieldIndex(x)) for x in fields]
+                attributes = dict(list(zip(fields, fld_data)))
+                attributes["ShpName"] = lyr.GetName()
+                # Note: Using layer level geometry type
+                if g.GetGeometryType() == ogr.wkbPoint:
+                    net.add_node(g.GetPoint_2D(0), **attributes)
+                elif g.GetGeometryType() in (ogr.wkbLineString,
+                                             ogr.wkbMultiLineString):
+                    for edge in edges_from_line(g, attributes, simplify,
+                                                geom_attrs):
+                        e1, e2, attr = edge
+                        net.add_edge(e1, e2)
+                        key = len(list(net[e1][e2].keys())) - 1
+                        net[e1][e2][key].update(attr)
+                elif g.GetGeometryType() == ogr.wkbMultiCurve:
+                    linear_geometry = g.GetLinearGeometry()
+
+                    for edge in edges_from_line(linear_geometry, attributes, simplify,
+                                                geom_attrs):
+                        e1, e2, attr = edge
+                        net.add_edge(e1, e2)
+                        key = len(list(net[e1][e2].keys())) - 1
+                        net[e1][e2][key].update(attr)
                 else:
-                    continue
-            fld_data = [f.GetField(f.GetFieldIndex(x)) for x in fields]
-            attributes = dict(list(zip(fields, fld_data)))
-            attributes["ShpName"] = lyr.GetName()
-            # Note: Using layer level geometry type
-            if g.GetGeometryType() == ogr.wkbPoint:
-                net.add_node(g.GetPoint_2D(0), **attributes)
-            elif g.GetGeometryType() in (ogr.wkbLineString,
-                                         ogr.wkbMultiLineString):
-                for edge in edges_from_line(g, attributes, simplify,
-                                            geom_attrs):
-                    e1, e2, attr = edge
-                    net.add_edge(e1, e2)
-                    key = len(list(net[e1][e2].keys())) - 1
-                    net[e1][e2][key].update(attr)
-            else:
-                if strict:
-                    logger.error("GeometryType {} not supported".
-                                 format(g.GetGeometryType()))
-                    raise nx.NetworkXError("GeometryType {} not supported".
-                                           format(g.GetGeometryType()))
+                    if strict:
+                        logger.error("GeometryType {} not supported".
+                                     format(g.GetGeometryType()))
+                        raise nx.NetworkXError("GeometryType {} not supported".
+                                               format(g.GetGeometryType()))
 
     return net
 
 
 # ----------------------------------------------------------------------------
 
+def make_vehicle_type_dict(the_scenario, logger):
+
+    # check for vehicle type file
+    ftot_program_directory = os.path.dirname(os.path.realpath(__file__))
+    vehicle_types_path = os.path.join(ftot_program_directory, "lib", "vehicle_types.csv")
+    if not os.path.exists(vehicle_types_path):
+        logger.warning("warning: cannot find vehicle_types file: {}".format(vehicle_types_path))
+        return {}  # return empty dict
+
+    # initialize vehicle property dict and read through vehicle_types CSV
+    vehicle_dict = {}
+    with open(vehicle_types_path, 'r') as vt:
+        line_num = 1
+        for line in vt:
+            if line_num == 1:
+                pass  # do nothing
+            else:
+                flds = line.rstrip('\n').split(',')
+                vehicle_label = flds[0]
+                mode = flds[1].lower()
+                vehicle_property = flds[2]
+                property_value = flds[3]
+
+                # validate entries
+                assert vehicle_label not in ['Default', 'NA'], "Vehicle label: {} is a protected word. Please rename the vehicle.".format(vehicle_label)
+
+                assert mode in ['road', 'water', 'rail'], "Mode: {} is not supported. Please specify road, water, or rail.".format(mode)
+
+                assert vehicle_property in ['Truck_Load_Solid', 'Railcar_Load_Solid', 'Barge_Load_Solid', 'Truck_Load_Liquid',
+                                            'Railcar_Load_Liquid', 'Barge_Load_Liquid', 'Pipeline_Crude_Load_Liquid', 'Pipeline_Prod_Load_Liquid',
+                                            'Truck_Fuel_Efficiency', 'Road_CO2_Emissions', 'Barge_Fuel_Efficiency',
+                                            'Barge_CO2_Emissions', 'Rail_Fuel_Efficiency', 'Railroad_CO2_Emissions'], \
+                                                "Vehicle property: {} is not recognized. Refer to scenario.xml for supported property labels.".format(vehicle_property)
+
+                # convert units
+                # Pint throws an exception if units are invalid
+                if vehicle_property in ['Truck_Load_Solid', 'Railcar_Load_Solid', 'Barge_Load_Solid']:
+                    # convert csv value into default solid units
+                    property_value = Q_(property_value).to(the_scenario.default_units_solid_phase)
+                elif vehicle_property in ['Truck_Load_Liquid', 'Railcar_Load_Liquid', 'Barge_Load_Liquid', 'Pipeline_Crude_Load_Liquid', 'Pipeline_Prod_Load_Liquid']:
+                    # convert csv value into default liquid units
+                    property_value = Q_(property_value).to(the_scenario.default_units_liquid_phase)
+                elif vehicle_property in ['Truck_Fuel_Efficiency', 'Barge_Fuel_Efficiency', 'Rail_Fuel_Efficiency']:
+                     # convert csv value into distance units per gallon
+                    property_value = Q_(property_value).to('{}/gal'.format(the_scenario.default_units_distance))
+                elif vehicle_property in ['Road_CO2_Emissions']:
+                     # convert csv value into grams per distance unit
+                    property_value = Q_(property_value).to('g/{}'.format(the_scenario.default_units_distance))
+                elif vehicle_property in ['Barge_CO2_Emissions', 'Railroad_CO2_Emissions']:
+                     # convert csv value into grams per default mass unit per distance unit
+                    property_value = Q_(property_value).to('g/{}/{}'.format(the_scenario.default_units_solid_phase, the_scenario.default_units_distance))
+                else:
+                    pass # do nothing
+
+                # populate dictionary
+                if mode not in vehicle_dict:
+                    # create entry for new mode type
+                    vehicle_dict[mode] = {}
+                if vehicle_label not in vehicle_dict[mode]:
+                    # create new vehicle key and add property
+                    vehicle_dict[mode][vehicle_label] = {vehicle_property: property_value}
+                else:
+                    # add property to existing vehicle
+                    if vehicle_property in vehicle_dict[mode][vehicle_label].keys():
+                        logger.warning('Property: {} already exists for Vehicle: {}. Overwriting with value: {}'.\
+                                       format(vehicle_property, vehicle_label, property_value))
+                    vehicle_dict[mode][vehicle_label][vehicle_property] = property_value
+
+            line_num += 1
+
+    # ensure all properties are included
+    for mode in vehicle_dict:
+        if mode == 'road':
+            properties = ['Truck_Load_Solid', 'Truck_Load_Liquid', 'Truck_Fuel_Efficiency', 'Road_CO2_Emissions']
+        elif mode == 'water':
+            properties = ['Barge_Load_Solid', 'Barge_Load_Liquid', 'Barge_Fuel_Efficiency', 'Barge_CO2_Emissions']
+        elif mode == 'rail':
+            properties = ['Railcar_Load_Solid', 'Railcar_Load_Liquid', 'Rail_Fuel_Efficiency', 'Railroad_CO2_Emissions']
+        for vehicle_label in vehicle_dict[mode]:
+            for required_property in properties:
+                assert required_property in vehicle_dict[mode][vehicle_label].keys(), "Property: {} missing from Vehicle: {}".format(required_property, vehicle_label)
+
+    return vehicle_dict
+
+
+# ----------------------------------------------------------------------------
+
+def vehicle_type_setup(the_scenario, logger):
+
+    logger.info("START: vehicle_type_setup")
+
+    with sqlite3.connect(the_scenario.main_db) as main_db_con:
+
+        main_db_con.executescript("""
+            drop table if exists vehicle_types;
+            create table vehicle_types(
+            mode text,
+            vehicle_label text,
+            property_name text,
+            property_value text,
+            CONSTRAINT unique_vehicle_and_property UNIQUE(mode, vehicle_label, property_name))
+            ;""")
+
+        vehicle_dict = make_vehicle_type_dict(the_scenario, logger)
+        for mode in vehicle_dict:
+            for vehicle_label in vehicle_dict[mode]:
+                for vehicle_property in vehicle_dict[mode][vehicle_label]:
+
+                    property_value = vehicle_dict[mode][vehicle_label][vehicle_property]
+
+                    main_db_con.execute("""
+                        insert or ignore into vehicle_types
+                        (mode, vehicle_label, property_name, property_value) 
+                        VALUES 
+                        ('{}','{}','{}','{}')
+                        ;
+                        """.format(mode, vehicle_label, vehicle_property, property_value))
+
+# ----------------------------------------------------------------------------
+
+
+def make_commodity_mode_dict(the_scenario, logger):
+
+    logger.info("START: make_commodity_mode_dict")
+
+    if the_scenario.commodity_mode_data == "None":
+        logger.info('commodity_mode_data file not specified.')
+        return {} # return empty dict
+
+    # check if path to table exists
+    elif not os.path.exists(the_scenario.commodity_mode_data):
+        logger.warning("warning: cannot find commodity_mode_data file: {}".format(the_scenario.commodity_mode_data))
+        return {}  # return empty dict
+
+    # initialize dict and read through commodity_mode CSV
+    commodity_mode_dict = {}
+    with open(the_scenario.commodity_mode_data, 'r') as rf:
+        line_num = 1
+        header = None  # will assign within for loop
+        for line in rf:
+            if line_num == 1:
+                header = line.rstrip('\n').split(',')
+                # Replace the short pipeline name with the long name
+                for h in range(len(header)):
+                    if header[h] == 'pipeline_crude':
+                        header[h] = 'pipeline_crude_trf_rts'
+                    elif header[h] == 'pipeline_prod':
+                        header[h] = 'pipeline_prod_trf_rts'
+            else:
+                flds = line.rstrip('\n').split(',')
+                commodity_name = flds[0].lower()
+                assignment = flds[1:]
+                if commodity_name in commodity_mode_dict.keys():
+                    logger.warning('Commodity: {} already exists. Overwriting with assignments: {}'.format(commodity_name, assignment))
+                commodity_mode_dict[commodity_name] = dict(zip(header[1:], assignment))
+            line_num += 1
+
+    # warn if trying to permit a mode that is not permitted in the scenario
+    for commodity in commodity_mode_dict:
+        for mode in commodity_mode_dict[commodity]:
+            if commodity_mode_dict[commodity][mode] != 'N' and mode not in the_scenario.permittedModes:
+                logger.warning("Mode: {} not permitted in scenario. Commodity: {} will not travel on this mode".format(mode, commodity))
+
+    return commodity_mode_dict
+
+
+# ----------------------------------------------------------------------------
+
+def commodity_mode_setup(the_scenario, logger):
+
+    logger.info("START: commodity_mode_setup")
+
+    with sqlite3.connect(the_scenario.main_db) as main_db_con:
+
+        main_db_con.executescript("""
+        drop table if exists commodity_mode;
+        
+        create table commodity_mode(
+        mode text,
+        commodity_id text,
+        commodity_phase text,
+        vehicle_label text,
+        allowed_yn text,
+        CONSTRAINT unique_commodity_and_mode UNIQUE(commodity_id, mode))
+        ;""")
+
+        # query commmodities table
+        commod = main_db_con.execute("select commodity_name, commodity_id, phase_of_matter from commodities where commodity_name <> 'multicommodity';")
+        commod = commod.fetchall()
+        commodities = {}
+        for row in commod:
+            commodity_name = row[0]
+            commodity_id = row[1]
+            phase_of_matter = row[2]
+            commodities[commodity_name] = (commodity_id, phase_of_matter)
+
+        # query vehicle types table
+        vehs = main_db_con.execute("select distinct mode, vehicle_label from vehicle_types;")
+        vehs = vehs.fetchall()
+        vehicle_types = {}
+        for row in vehs:
+            mode = row[0]
+            vehicle_label = row[1]
+            if mode not in vehicle_types:
+                # add new mode to dictionary and start vehicle list
+                vehicle_types[mode] = [vehicle_label]
+            else:
+                # append new vehicle to mode's vehicle list
+                vehicle_types[mode].append(vehicle_label)
+
+        # assign mode permissions and vehicle labels to commodities
+        commodity_mode_dict = make_commodity_mode_dict(the_scenario, logger)
+        logger.info("----- commodity/vehicle type table -----")
+
+        for permitted_mode in the_scenario.permittedModes:
+            for k, v in iteritems(commodities):
+                commodity_name = k
+                commodity_id = v[0]
+                phase_of_matter = v[1]
+
+                allowed = 'Y'  # may be updated later in loop
+                vehicle_label = 'Default'  # may be updated later in loop
+
+                if commodity_name in commodity_mode_dict and permitted_mode in commodity_mode_dict[commodity_name]:
+
+                    # get user's entry for commodity and mode
+                    assignment = commodity_mode_dict[commodity_name][permitted_mode]
+
+                    if assignment == 'Y':
+                        if phase_of_matter != 'liquid' and 'pipeline' in permitted_mode:
+                            # solids not permitted on pipeline.
+                            # note that FTOT previously asserts no custom vehicle label is created for pipeline
+                            logger.warning("commodity {} is not liquid and cannot travel through pipeline mode: {}".format(
+                                commodity_name, permitted_mode))
+                            allowed = 'N'
+                            vehicle_label = 'NA'
+
+                    elif assignment == 'N':
+                        allowed = 'N'
+                        vehicle_label = 'NA'
+
+                    else:
+                        # user specified a vehicle type
+                        allowed = 'Y'
+                        if permitted_mode in vehicle_types and assignment in vehicle_types[permitted_mode]:
+                            # accept user's assignment
+                            vehicle_label = assignment
+                        else:
+                            # assignment not a known vehicle. fail.
+                            raise Exception("improper vehicle label in Commodity_Mode_Data_csv for commodity: {}, mode: {}, and vehicle: {}". \
+                                    format(commodity_name, permitted_mode, assignment))
+
+                elif 'pipeline' in permitted_mode:
+                    # for unspecified commodities, default to not permitted on pipeline
+                    allowed = 'N'
+                    vehicle_label = 'NA'
+                
+                # Raise error if custom vehicle is assigned in a CO2 optimization scenario
+                if the_scenario.co2_cost_scalar > 0 and vehicle_label not in ['Default','NA']:
+                    raise Exception("Commodity-specific vehicles cannot be used in a CO2 optimization scenario.")
+
+                logger.info("Commodity name: {}, Mode: {}, Allowed: {}, Vehicle type: {}". \
+                            format(commodity_name, permitted_mode, allowed, vehicle_label))
+
+                # write table. only includes modes that are permitted in the scenario xml file.
+                main_db_con.execute("""
+                   insert or ignore into commodity_mode
+                   (mode, commodity_id, commodity_phase, vehicle_label, allowed_yn) 
+                   VALUES 
+                   ('{}',{},'{}','{}','{}')
+                   ;
+                   """.format(permitted_mode, commodity_id, phase_of_matter, vehicle_label, allowed))
+
+    return
+
+
+# ----------------------------------------------------------------------------
 
 def edges_from_line(geom, attrs, simplify=True, geom_attrs=True):
     """
     Generate edges for each line in geom
-    Written as a helper for read_shp
+    Written as a helper for read_gdb
 
     Parameters
     ----------
@@ -1780,10 +2234,10 @@ def edges_from_line(geom, attrs, simplify=True, geom_attrs=True):
         Attributes to be associated with all geoms
 
     simplify:  bool
-        If True, simplify the line as in read_shp
+        If True, simplify the line as in read_gdb
 
     geom_attrs:  bool
-        If True, add geom attributes to edge as in read_shp
+        If True, add geom attributes to edge as in read_gdb
 
 
     Returns
@@ -1827,3 +2281,4 @@ def edges_from_line(geom, attrs, simplify=True, geom_attrs=True):
             geom_i = geom.GetGeometryRef(i)
             for edge in edges_from_line(geom_i, attrs, simplify, geom_attrs):
                 yield edge
+

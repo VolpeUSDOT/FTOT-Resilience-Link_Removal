@@ -3,7 +3,6 @@
 documentation/
 scenarios/
 logs/
-temp_networkx_shp_files/
 debug/
 Maps/
 Reports/
@@ -13,3 +12,4 @@ Reports/
 Maps_Time_Commodity/
 python3_env/
 *.jpg
+.Rhistory
