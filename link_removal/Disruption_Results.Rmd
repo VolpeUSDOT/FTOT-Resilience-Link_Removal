@@ -33,7 +33,6 @@ suppressPackageStartupMessages(library(plotly, lib.loc = use_lib))
 suppressPackageStartupMessages(library(knitr, lib.loc = use_lib))
 suppressPackageStartupMessages(library(sf, lib.loc = use_lib))
 suppressPackageStartupMessages(library(rlist, lib.loc = use_lib))
-#suppressPackageStartupMessages(library(basemaps, lib.loc = use_lib))
 suppressPackageStartupMessages(library(leaflet, lib.loc = use_lib))
 suppressPackageStartupMessages(library(htmltools, lib.loc = use_lib))
 
@@ -51,7 +50,6 @@ disrupt_root <- paste(params$base_scen, params$disrupt_type, 'disrupt', sep = '_
 res <- read.csv(file.path(disrupt_root, 'Results.csv'))
 edges <- read.csv(file.path(disrupt_root, 'Edges_to_Remove.csv'))
 edges['Rank'] = 1:nrow(edges)
-edges <- edges[1:nrow(res),]
 
 # Check for duplicate edges
 hasDuplicates <- any(duplicated(edges$mode_oid))
@@ -115,6 +113,7 @@ The graph below presents total scenario cost (or optimization objective value) v
 # clean up commas
 res$total_cost <- as.numeric(sub('\\,', '', res$total_cost))
 
+edges <- edges[1:nrow(res),]
 res_edges <- merge(res, edges, by.x = 'disrupt_step', by.y = 'Rank')
 res_edges$cost_change <- res_edges$total_cost - lag(res_edges$total_cost)
 
@@ -247,7 +246,7 @@ leaflet(route_w_rank_res) %>%
 
 ## Table of Ranked Segments
 
-The table below lists the road network links that were ranked by importance. Links were iteratively removed in disruption scenarios in order of ranking up to the __user-specified `r nrow(res)` disruption steps__.
+The table below lists the road network links that were ranked by importance. Links were iteratively removed in disruption scenarios in order of ranking up to the user-specified `r nrow(res)` disruption steps.
 
 ```{r edge_table}
 
