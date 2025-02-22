@@ -1007,7 +1007,8 @@ def minimum_bounding_geometry(the_scenario, logger):
     arcpy.MinimumBoundingGeometry_management("Locations", "Locations_MBG", "CONVEX_HULL")
 
     # Buffer the minimum bounding geometry of the scenario
-    arcpy.Buffer_analysis("Locations_MBG", "Locations_MBG_Buffered", "100 Miles", "FULL", "ROUND", "NONE", "",
+    # <<>> For Resilience Link Removal tool, this buffer has been reduced to 50 from 100 mi for greater specificity <<>>
+    arcpy.Buffer_analysis("Locations_MBG", "Locations_MBG_Buffered", "50 Miles", "FULL", "ROUND", "NONE", "",
                           "GEODESIC")
 
     # Select the roads within the buffer
@@ -1033,7 +1034,8 @@ def minimum_bounding_geometry(the_scenario, logger):
 
         # Additionally keep any limited access roadways regardless of whether they fall within the selection
         # Note this won't do anything if limited access isn't populated in the network
-        arcpy.SelectLayerByAttribute_management("road_lyr", "REMOVE_FROM_SELECTION", "Limited_Access = 1")
+        # <<>> For Resilience Link Removal Tool, do not add back these roadways <<>>
+        # arcpy.SelectLayerByAttribute_management("road_lyr", "REMOVE_FROM_SELECTION", "Limited_Access = 1")
 
         # Delete the features outside the buffer
         with arcpy.da.UpdateCursor('road_lyr', ['OBJECTID']) as ucursor:
