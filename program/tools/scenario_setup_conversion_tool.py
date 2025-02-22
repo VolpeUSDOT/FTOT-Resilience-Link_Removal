@@ -99,10 +99,14 @@ def create_csv_files(input_data_dir, xlsx_file):
     # Load XLSX workbook
     wb = openpyxl.load_workbook(filename=xlsx_file, read_only=False, keep_vba=False, data_only=True, keep_links=False)
 
-    # Read Configuration tab for default currency
+    # Read Configuration tab 
     ws0 = wb['Configuration']
+
     # Pull default currency for build cost units
     currency_units = ws0['B15'].value
+
+    # Get NDR status
+    ndrOn = ws0['B83'].value
 
     # Read commodities table from Commodities and Processes tab
     print("Reading in the Commodities and Processes tab")
@@ -196,7 +200,7 @@ def create_csv_files(input_data_dir, xlsx_file):
     rmp_file_path = os.path.join(input_data_dir, 'rmp.csv')
     # Ignore optional inputs: Min Amount, Min Aggregation, Build Cost
     rmp_data = fac_data.loc[fac_data['Facility Type'] == 'raw_material_producer', ['Facility Name', 'Facility Type', 'Commodity or Process',
-                                                                                   'Max Amount', 'Units', 'Schedule']]
+                                                                                   'Max Amount', 'Units', 'Schedule', 'Access Cost']]
 
     # Check that rmp_data has more than zero rows
     if rmp_data.shape[0] == 0:
@@ -218,7 +222,7 @@ def create_csv_files(input_data_dir, xlsx_file):
     rmp_data = rmp_data.drop(columns=['Name', '_merge'])
     rmp_data = rmp_data.rename(columns={'Facility Name': 'facility_name', 'Facility Type': 'facility_type',
                                         'Commodity or Process': 'commodity', 'Max Amount': 'value', 'Units': 'units',
-                                        'Schedule': 'schedule', 'Phase': 'phase_of_matter'})
+                                        'Schedule': 'schedule', 'Phase': 'phase_of_matter', 'Access Cost': 'access_cost'})
     rmp_data = rmp_data.assign(io='o')
     if not comm_data['Max Transport Distance'].isna().all():
         rmp_data = pd.merge(rmp_data, comm_data[['Name', 'Max Transport Distance']],
@@ -229,11 +233,20 @@ def create_csv_files(input_data_dir, xlsx_file):
             raise IOError(error)
         rmp_data = rmp_data.drop(columns=['Name', '_merge'])
         rmp_data = rmp_data.rename(columns={'Max Transport Distance': 'max_transport_distance'})
-    # Move 'schedule' column to end or drop if schedules not used
-    if schedule_flag:
-        rmp_data = rmp_data[[c for c in rmp_data if c not in ['schedule']] + ['schedule']]
+        
+        # Reorder columns
+        rmp_data = rmp_data[['facility_name', 'facility_type', 'commodity', 'value', 'units', 'phase_of_matter', 'io', 'max_transport_distance', 'access_cost', 'schedule']]
     else:
+        # Reorder columns
+        rmp_data = rmp_data[['facility_name', 'facility_type', 'commodity', 'value', 'units', 'phase_of_matter', 'io', 'access_cost', 'schedule']]
+
+    # Drop 'schedule' column if not used
+    if not schedule_flag:
         rmp_data = rmp_data.drop(columns=['schedule'])
+
+    # Drop access cost if no data
+    if rmp_data['access_cost'].isna().all():
+        rmp_data = rmp_data.drop(columns=['access_cost'])
 
     with open(rmp_file_path, "w", newline='') as f:
         print("Writing the rmp.csv file: {}".format(rmp_file_path))
@@ -254,7 +267,7 @@ def create_csv_files(input_data_dir, xlsx_file):
 
     # Loop through facility rows
     # Append rows processor by processor
-    proc_col_names = ['facility_name', 'facility_type', 'commodity', 'value', 'units', 'phase_of_matter', 'io', 'max_capacity', 'min_capacity', 'build_cost', 'schedule']
+    proc_col_names = ['facility_name', 'facility_type', 'commodity', 'value', 'units', 'phase_of_matter', 'io', 'max_capacity', 'min_capacity', 'build_cost', 'max_transport_distance',  'schedule', 'access_cost']
     proc_cand_col_names = ['facility_name', 'facility_type', 'commodity', 'value', 'units', 'phase_of_matter', 'io', 'schedule']
     proc_rows = pd.DataFrame(columns=proc_col_names)
     proc_cand_rows = pd.DataFrame(columns=proc_cand_col_names)
@@ -289,10 +302,10 @@ def create_csv_files(input_data_dir, xlsx_file):
                     raise IOError(error)
                 print("Adding facility capacity row for facility {}".format(row['Facility Name']))
                 temp_total = {'commodity': 'total', 'value': '', 'units': row['Units'], 'phase_of_matter': cap_phase, 'io': 'i', 'max_capacity': row['Max Amount'], 'min_capacity': row['Min Amount']}
-                temp_proc = temp_proc.append(temp_total, ignore_index=True)
-            # Add facility_name, facility_type, build cost, schedule fields
+                temp_proc = pd.concat([temp_proc, pd.DataFrame([temp_total])], ignore_index=True)
+            # Add facility_name, facility_type, build cost, schedule, access cost fields
             temp_proc = temp_proc.assign(facility_name=row['Facility Name'], facility_type=row['Facility Type'],
-                                         build_cost=row['Build Cost'], schedule=row['Schedule'])
+                                         build_cost=row['Build Cost'], schedule=row['Schedule'], access_cost=row['Access Cost'])
             proc_rows = pd.concat([proc_rows, temp_proc])
         elif processes[row['Commodity or Process']]['existing_fac'] == 'N':
             print("Adding candidate processor specification {} to proc_cand.csv file {}".format(row['Facility Name'], proc_cand_file_path))
@@ -318,10 +331,10 @@ def create_csv_files(input_data_dir, xlsx_file):
                     raise IOError(error)
                 # Add maxsize, minsize, min_aggregation, cost_formula rows
                 # Use default currency and calculate per unit build cost from row['Build Cost'] based on maxsize
-                temp_proc_cand = temp_proc_cand.append({'commodity': 'minsize', 'value': row['Min Amount'], 'units': row['Units'], 'phase_of_matter': cap_phase, 'io': ''}, ignore_index=True)
-                temp_proc_cand = temp_proc_cand.append({'commodity': 'maxsize', 'value': row['Max Amount'], 'units': row['Units'], 'phase_of_matter': cap_phase, 'io': ''}, ignore_index=True)
-                temp_proc_cand = temp_proc_cand.append({'commodity': 'cost_formula', 'value': row['Build Cost']/row['Max Amount'], 'units': currency_units + '/' + row['Units'], 'phase_of_matter': '', 'io': ''}, ignore_index=True)
-                temp_proc_cand = temp_proc_cand.append({'commodity': 'min_aggregation', 'value': row['Min Aggregation'], 'units': row['Units'], 'phase_of_matter': cap_phase, 'io': ''}, ignore_index=True)
+                temp_proc_cand = pd.concat([temp_proc_cand, pd.DataFrame([{'commodity': 'minsize', 'value': row['Min Amount'], 'units': row['Units'], 'phase_of_matter': cap_phase, 'io': ''}])], ignore_index=True)
+                temp_proc_cand = pd.concat([temp_proc_cand, pd.DataFrame([{'commodity': 'maxsize', 'value': row['Max Amount'], 'units': row['Units'], 'phase_of_matter': cap_phase, 'io': ''}])], ignore_index=True)
+                temp_proc_cand = pd.concat([temp_proc_cand, pd.DataFrame([{'commodity': 'cost_formula', 'value': row['Build Cost']/row['Max Amount'], 'units': currency_units + '/' + row['Units'], 'phase_of_matter': '', 'io': ''}])], ignore_index=True)
+                temp_proc_cand = pd.concat([temp_proc_cand, pd.DataFrame([{'commodity': 'min_aggregation', 'value': row['Min Aggregation'], 'units': row['Units'], 'phase_of_matter': cap_phase, 'io': ''}])], ignore_index=True)
                 # Add facility_name, facility_type, schedule fields
                 temp_proc_cand = temp_proc_cand.assign(facility_name=row['Facility Name'], facility_type=row['Facility Type'], schedule=row['Schedule'])
             else:
@@ -335,12 +348,37 @@ def create_csv_files(input_data_dir, xlsx_file):
             print(error)
             raise IOError(error)
 
-    # Drop build cost, schedule from proc.csv if all null
+    # Add max transport distance column
+    if str(ndrOn).lower() == 'true' and not comm_data['Max Transport Distance'].isna().all():
+        # Get rows for processor output commodities only
+        proc_rows_output_comm = proc_rows.loc[proc_rows['io'] == 'o']
+
+        # Keep commodity MTD only for those output commodities
+        output_comm_data = comm_data.loc[comm_data['Name'].isin(proc_rows_output_comm['commodity'])]
+
+        # Merge MTD into proc CSV tables
+        proc_rows = pd.merge(proc_rows, output_comm_data[['Name', 'Max Transport Distance']],
+                             how='left', left_on='commodity', right_on='Name')
+
+        proc_rows['max_transport_distance'] = proc_rows['Max Transport Distance']
+        proc_rows = proc_rows.drop(columns=['Name', 'Max Transport Distance'])
+
+        # Reorder columns
+        proc_rows = proc_rows[['facility_name', 'facility_type', 'commodity', 'value', 'units', 'phase_of_matter', 'io', 'max_capacity', 'min_capacity',
+                               'build_cost', 'max_transport_distance', 'access_cost', 'schedule']]
+    else:
+        # Drop MTD and reorder columns
+        proc_rows = proc_rows.drop(columns=['max_transport_distance'])
+        proc_rows = proc_rows[['facility_name', 'facility_type', 'commodity', 'value', 'units', 'phase_of_matter', 'io', 'max_capacity', 'min_capacity', 'build_cost', 'access_cost', 'schedule']]
+
+    # Drop build cost, schedule, access cost from proc.csv if all null
     if not schedule_flag:
         proc_rows = proc_rows.drop(columns=['schedule'])
         proc_cand_rows = proc_cand_rows.drop(columns=['schedule'])
     if proc_rows['build_cost'].isna().all():
         proc_rows = proc_rows.drop(columns=['build_cost'])
+    if proc_rows['access_cost'].isna().all():
+        proc_rows = proc_rows.drop(columns=['access_cost'])
 
     with open(proc_file_path, "w", newline='') as f:
         print("Writing the proc.csv file: {}".format(proc_file_path))
@@ -354,7 +392,7 @@ def create_csv_files(input_data_dir, xlsx_file):
     dest_file_path = os.path.join(input_data_dir, 'dest.csv')
     # Ignore optional inputs: Min Amount, Min Aggregation, Build Cost
     dest_data = fac_data.loc[fac_data['Facility Type'] == 'ultimate_destination', ['Facility Name', 'Facility Type', 'Commodity or Process',
-                                                                                   'Max Amount', 'Units', 'Schedule']]
+                                                                                   'Max Amount', 'Units', 'Schedule', 'Access Cost', 'Unmet Demand Penalty']]
 
     # Check that dest_data has more than zero rows
     if dest_data.shape[0] == 0:
@@ -376,13 +414,24 @@ def create_csv_files(input_data_dir, xlsx_file):
     dest_data = dest_data.drop(columns=['Name', '_merge'])
     dest_data = dest_data.rename(columns={'Facility Name': 'facility_name', 'Facility Type': 'facility_type',
                                           'Commodity or Process': 'commodity', 'Max Amount': 'value', 'Units': 'units',
-                                          'Schedule': 'schedule', 'Phase': 'phase_of_matter'})
+                                          'Schedule': 'schedule', 'Phase': 'phase_of_matter', 'Access Cost': 'access_cost',
+                                          'Unmet Demand Penalty': 'udp'})
     dest_data = dest_data.assign(io='i')
-    # Move 'schedule' column to end or drop if schedules not used
-    if schedule_flag:
-        dest_data = dest_data[[c for c in dest_data if c not in ['schedule']] + ['schedule']]
-    else:
+    
+    # Reorder columns
+    dest_data = dest_data[['facility_name', 'facility_type', 'commodity', 'value', 'units', 'phase_of_matter', 'io', 'access_cost', 'udp', 'schedule']]
+
+    # Drop 'schedule' column if schedules not used
+    if not schedule_flag:
         dest_data = dest_data.drop(columns=['schedule'])
+
+    # Drop access cost if no data
+    if dest_data['access_cost'].isna().all():
+        dest_data = dest_data.drop(columns=['access_cost'])
+
+    # Drop udp if no data
+    if dest_data['udp'].isna().all():
+        dest_data = dest_data.drop(columns=['udp'])
 
     with open(dest_file_path, "w", newline='') as f:
         print("Writing the dest.csv file: {}".format(dest_file_path))
@@ -432,23 +481,23 @@ def create_xml_file(scenario_dir, xlsx_file, cand_gen_flag, schedule_flag):
     the_temp_etree.find('{Schema_v7.0.0}Scenario_Inputs').find('{Schema_v7.0.0}Default_Units_Currency').text = ws['B15'].value
 
     # Need to convert from "thousand gallons" to "thousand_gallon"
-    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Truck_Load_Solid').text = str(ws['B52'].value) + ' ' + ws['C52'].value
-    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Railcar_Load_Solid').text = str(ws['B55'].value) + ' ' + ws['C55'].value
-    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Barge_Load_Solid').text = str(ws['B58'].value) + ' ' + ws['C58'].value
-    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Truck_Load_Liquid').text = str(ws['B53'].value) + ' ' + ('thousand_gallon' if ws['C53'].value == 'thousand gallons' else ws['C53'].value)
-    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Railcar_Load_Liquid').text = str(ws['B56'].value) + ' ' + ('thousand_gallon' if ws['C56'].value == 'thousand gallons' else ws['C56'].value)
-    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Barge_Load_Liquid').text = str(ws['B59'].value) + ' ' + ('thousand_gallon' if ws['C59'].value == 'thousand gallons' else ws['C59'].value)
-    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Pipeline_Crude_Load_Liquid').text = str(ws['B61'].value) + ' ' + ('thousand_gallon' if ws['C61'].value == 'thousand gallons' else ws['C61'].value)
-    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Pipeline_Prod_Load_Liquid').text = str(ws['B62'].value) + ' ' + ('thousand_gallon' if ws['C62'].value == 'thousand gallons' else ws['C62'].value)
-    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Truck_Fuel_Efficiency').text = str(ws['B54'].value) + ' ' + ws['C54'].value
-    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Rail_Fuel_Efficiency').text = str(ws['B57'].value) + ' ' + ws['C57'].value
-    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Barge_Fuel_Efficiency').text = str(ws['B60'].value) + ' ' + ws['C60'].value
-    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Road_CO2_Emissions').text = str(ws['B65'].value) + ' ' + ws['C65'].value
-    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Railroad_CO2_Emissions').text = str(ws['B66'].value) + ' ' + ws['C66'].value
-    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Barge_CO2_Emissions').text = str(ws['B67'].value) + ' ' + ws['C67'].value
-    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Pipeline_CO2_Emissions').text = str(ws['B68'].value) + ' ' + ws['C68'].value
+    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Truck_Load_Solid').text = str(ws['B54'].value) + ' ' + ws['C54'].value
+    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Railcar_Load_Solid').text = str(ws['B57'].value) + ' ' + ws['C57'].value
+    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Barge_Load_Solid').text = str(ws['B60'].value) + ' ' + ws['C60'].value
+    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Truck_Load_Liquid').text = str(ws['B55'].value) + ' ' + ('thousand_gallon' if ws['C55'].value == 'thousand gallons' else ws['C55'].value)
+    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Railcar_Load_Liquid').text = str(ws['B58'].value) + ' ' + ('thousand_gallon' if ws['C58'].value == 'thousand gallons' else ws['C58'].value)
+    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Barge_Load_Liquid').text = str(ws['B61'].value) + ' ' + ('thousand_gallon' if ws['C61'].value == 'thousand gallons' else ws['C61'].value)
+    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Pipeline_Crude_Load_Liquid').text = str(ws['B63'].value) + ' ' + ('thousand_gallon' if ws['C63'].value == 'thousand gallons' else ws['C63'].value)
+    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Pipeline_Prod_Load_Liquid').text = str(ws['B64'].value) + ' ' + ('thousand_gallon' if ws['C64'].value == 'thousand gallons' else ws['C64'].value)
+    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Truck_Fuel_Efficiency').text = str(ws['B56'].value) + ' ' + ws['C56'].value
+    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Rail_Fuel_Efficiency').text = str(ws['B59'].value) + ' ' + ws['C59'].value
+    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Barge_Fuel_Efficiency').text = str(ws['B62'].value) + ' ' + ws['C62'].value
+    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Road_CO2_Emissions').text = str(ws['B67'].value) + ' ' + ws['C67'].value
+    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Railroad_CO2_Emissions').text = str(ws['B68'].value) + ' ' + ws['C68'].value
+    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Barge_CO2_Emissions').text = str(ws['B69'].value) + ' ' + ws['C69'].value
+    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Pipeline_CO2_Emissions').text = str(ws['B70'].value) + ' ' + ws['C70'].value
     the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Detailed_Emissions_Data').text = ws['B39'].value
-    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Density_Conversion_Factor').text = str(ws['B69'].value) + ' ' + ws['C69'].value
+    the_temp_etree.find('{Schema_v7.0.0}Assumptions').find('{Schema_v7.0.0}Density_Conversion_Factor').text = str(ws['B71'].value) + ' ' + ws['C71'].value
 
     the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Network_Costs').find('{Schema_v7.0.0}Modal_Costs').find('{Schema_v7.0.0}Truck').find('{Schema_v7.0.0}liquid_Truck_Base_Cost').text = str(ws['B43'].value) + ' ' + ws['C43'].value
     the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Network_Costs').find('{Schema_v7.0.0}Modal_Costs').find('{Schema_v7.0.0}Truck').find('{Schema_v7.0.0}solid_Truck_Base_Cost').text = str(ws['B42'].value) + ' ' + ws['C42'].value
@@ -456,38 +505,40 @@ def create_xml_file(scenario_dir, xlsx_file, cand_gen_flag, schedule_flag):
     the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Network_Costs').find('{Schema_v7.0.0}Modal_Costs').find('{Schema_v7.0.0}Railroad').find('{Schema_v7.0.0}solid_Railroad_Class_I_Cost').text = str(ws['B44'].value) + ' ' + ws['C44'].value
     the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Network_Costs').find('{Schema_v7.0.0}Modal_Costs').find('{Schema_v7.0.0}Barge').find('{Schema_v7.0.0}liquid_Barge_cost').text = str(ws['B47'].value) + ' ' + ws['C47'].value
     the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Network_Costs').find('{Schema_v7.0.0}Modal_Costs').find('{Schema_v7.0.0}Barge').find('{Schema_v7.0.0}solid_Barge_cost').text = str(ws['B46'].value) + ' ' + ws['C46'].value
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Network_Costs').find('{Schema_v7.0.0}Modal_Costs').find('{Schema_v7.0.0}Artificial_Link').find('{Schema_v7.0.0}liquid_Artificial_Cost').text = str(ws['B49'].value) + ' ' + ws['C49'].value
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Network_Costs').find('{Schema_v7.0.0}Modal_Costs').find('{Schema_v7.0.0}Artificial_Link').find('{Schema_v7.0.0}solid_Artificial_Cost').text = str(ws['B48'].value) + ' ' + ws['C48'].value
     the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Network_Costs').find('{Schema_v7.0.0}Modal_Costs').find('{Schema_v7.0.0}Impedance_Weights_Data').text = ws['B34'].value
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Network_Costs').find('{Schema_v7.0.0}Intermodal_Transloading_Costs').find('{Schema_v7.0.0}liquid_Transloading_Cost').text = str(ws['B49'].value) + ' ' + ws['C49'].value
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Network_Costs').find('{Schema_v7.0.0}Intermodal_Transloading_Costs').find('{Schema_v7.0.0}solid_Transloading_Cost').text = str(ws['B48'].value) + ' ' + ws['C48'].value
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Network_Costs').find('{Schema_v7.0.0}Intermodal_Transloading_Costs').find('{Schema_v7.0.0}liquid_Transloading_Cost').text = str(ws['B51'].value) + ' ' + ws['C51'].value
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Network_Costs').find('{Schema_v7.0.0}Intermodal_Transloading_Costs').find('{Schema_v7.0.0}solid_Transloading_Cost').text = str(ws['B50'].value) + ' ' + ws['C50'].value
 
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Artificial_Links').find('{Schema_v7.0.0}Road_Max_Artificial_Link_Distance').text = str(ws['B73'].value) + ' ' + ws['C73'].value
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Artificial_Links').find('{Schema_v7.0.0}Rail_Max_Artificial_Link_Distance').text = str(ws['B74'].value) + ' ' + ws['C74'].value
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Artificial_Links').find('{Schema_v7.0.0}Water_Max_Artificial_Link_Distance').text = str(ws['B75'].value) + ' ' + ws['C75'].value
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Artificial_Links').find('{Schema_v7.0.0}Pipeline_Crude_Max_Artificial_Link_Distance').text = str(ws['B76'].value) + ' ' + ws['C76'].value
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Artificial_Links').find('{Schema_v7.0.0}Pipeline_Products_Max_Artificial_Link_Distance').text = str(ws['B77'].value) + ' ' + ws['C77'].value
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Artificial_Links').find('{Schema_v7.0.0}Report_With_Artificial_Links').text = str(ws['B72'].value)
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Short_Haul_Penalties').find('{Schema_v7.0.0}Rail_Short_Haul_Penalty').text = str(ws['B82'].value) + ' ' + ws['C82'].value
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Short_Haul_Penalties').find('{Schema_v7.0.0}Water_Short_Haul_Penalty').text = str(ws['B83'].value) + ' ' + ws['C83'].value
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Artificial_Links').find('{Schema_v7.0.0}Road_Max_Artificial_Link_Distance').text = str(ws['B75'].value) + ' ' + ws['C75'].value
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Artificial_Links').find('{Schema_v7.0.0}Rail_Max_Artificial_Link_Distance').text = str(ws['B76'].value) + ' ' + ws['C76'].value
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Artificial_Links').find('{Schema_v7.0.0}Water_Max_Artificial_Link_Distance').text = str(ws['B77'].value) + ' ' + ws['C77'].value
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Artificial_Links').find('{Schema_v7.0.0}Pipeline_Crude_Max_Artificial_Link_Distance').text = str(ws['B78'].value) + ' ' + ws['C78'].value
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Artificial_Links').find('{Schema_v7.0.0}Pipeline_Products_Max_Artificial_Link_Distance').text = str(ws['B79'].value) + ' ' + ws['C79'].value
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Artificial_Links').find('{Schema_v7.0.0}Report_With_Artificial_Links').text = str(ws['B74'].value)
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Short_Haul_Penalties').find('{Schema_v7.0.0}Rail_Short_Haul_Penalty').text = str(ws['B84'].value) + ' ' + ws['C84'].value
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Create_Network_Layer_Script').find('{Schema_v7.0.0}Short_Haul_Penalties').find('{Schema_v7.0.0}Water_Short_Haul_Penalty').text = str(ws['B85'].value) + ' ' + ws['C85'].value
 
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}NDR_On').text = str(ws['B81'].value)
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}NDR_On').text = str(ws['B83'].value)
     the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Permitted_Modes').find('{Schema_v7.0.0}Road').text = str(ws['B23'].value)
     the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Permitted_Modes').find('{Schema_v7.0.0}Rail').text = str(ws['B24'].value)
     the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Permitted_Modes').find('{Schema_v7.0.0}Water').text = str(ws['B25'].value)
     the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Permitted_Modes').find('{Schema_v7.0.0}Pipeline_Crude').text = str(ws['B26'].value)
     the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Permitted_Modes').find('{Schema_v7.0.0}Pipeline_Prod').text = str(ws['B27'].value)
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Capacity_Options').find('{Schema_v7.0.0}Capacity_On').text = str(ws['B84'].value)
-    if str(ws['B84'].value).lower() == 'true':
-        assert str(ws['B81'].value).lower() == 'false', 'The NDR_On parameter in cell B81 of the Configuration tab cannot be set to true if the Capacity_On parameter in cell B84 of the Configuration tab is set to true.'
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Capacity_Options').find('{Schema_v7.0.0}Background_Flows').find('{Schema_v7.0.0}Road').text = str(ws['B85'].value)
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Capacity_Options').find('{Schema_v7.0.0}Background_Flows').find('{Schema_v7.0.0}Rail').text = str(ws['B86'].value)
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Capacity_Options').find('{Schema_v7.0.0}Background_Flows').find('{Schema_v7.0.0}Water').text = str(ws['B87'].value)
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Capacity_Options').find('{Schema_v7.0.0}Background_Flows').find('{Schema_v7.0.0}Pipeline_Crude').text = str(ws['B88'].value)
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Capacity_Options').find('{Schema_v7.0.0}Background_Flows').find('{Schema_v7.0.0}Pipeline_Prod').text = str(ws['B89'].value)
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Capacity_Options').find('{Schema_v7.0.0}Minimum_Capacity_Level').text = str(ws['B90'].value)
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}CO2_Optimization').find('{Schema_v7.0.0}Transport_Cost_Scalar').text = str(ws['B91'].value)
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}CO2_Optimization').find('{Schema_v7.0.0}CO2_Cost_Scalar').text = str(ws['B92'].value)
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}CO2_Optimization').find('{Schema_v7.0.0}CO2_Unit_Cost').text = str(ws['B93'].value) + ' ' + ws['C93'].value
-    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Unmet_Demand_Penalty').text = str(ws['B80'].value)
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Capacity_Options').find('{Schema_v7.0.0}Capacity_On').text = str(ws['B86'].value)
+    if str(ws['B86'].value).lower() == 'true':
+        assert str(ws['B83'].value).lower() == 'false', 'The NDR_On parameter in cell B83 of the Configuration tab cannot be set to true if the Capacity_On parameter in cell B86 of the Configuration tab is set to true.'
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Capacity_Options').find('{Schema_v7.0.0}Background_Flows').find('{Schema_v7.0.0}Road').text = str(ws['B87'].value)
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Capacity_Options').find('{Schema_v7.0.0}Background_Flows').find('{Schema_v7.0.0}Rail').text = str(ws['B88'].value)
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Capacity_Options').find('{Schema_v7.0.0}Background_Flows').find('{Schema_v7.0.0}Water').text = str(ws['B89'].value)
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Capacity_Options').find('{Schema_v7.0.0}Background_Flows').find('{Schema_v7.0.0}Pipeline_Crude').text = str(ws['B90'].value)
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Capacity_Options').find('{Schema_v7.0.0}Background_Flows').find('{Schema_v7.0.0}Pipeline_Prod').text = str(ws['B91'].value)
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Capacity_Options').find('{Schema_v7.0.0}Minimum_Capacity_Level').text = str(ws['B92'].value)
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}CO2_Optimization').find('{Schema_v7.0.0}Transport_Cost_Scalar').text = str(ws['B93'].value)
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}CO2_Optimization').find('{Schema_v7.0.0}CO2_Cost_Scalar').text = str(ws['B94'].value)
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}CO2_Optimization').find('{Schema_v7.0.0}CO2_Unit_Cost').text = str(ws['B95'].value) + ' ' + ws['C95'].value
+    the_temp_etree.find('{Schema_v7.0.0}scriptParameters').find('{Schema_v7.0.0}Route_Optimization_Script').find('{Schema_v7.0.0}Unmet_Demand_Penalty').text = str(ws['B82'].value)
 
     # Write XML file
     xml_file_path = os.path.join(scenario_dir, "scenario.xml")

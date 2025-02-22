@@ -73,16 +73,26 @@ def oc3(the_scenario, logger):
 def check_max_transport_distance_for_OC_step(the_scenario, logger):
     # --------------------------------------------------------------------------
     with sqlite3.connect(the_scenario.main_db) as main_db_con:
-        sql = "SELECT COUNT(*) FROM commodities WHERE max_transport_distance IS NOT NULL;"
+        # get number of commodities that should have max transport distance
+        sql = """SELECT COUNT(distinct(cpc.process_id)) FROM 
+                candidate_process_commodities cpc
+                JOIN commodities c
+                on cpc.commodity_id = c.commodity_id
+                WHERE cpc.io = 'i' and c.max_transport_distance is null;"""
         db_cur = main_db_con.execute(sql)
         count_data = db_cur.fetchone()[0]
-        print (count_data)
-    if count_data == 0:
-        logger.error("running the OC step requires that at least commodity from the RMPs have a max transport "
-                     "distance specified in the input CSV file.")
-        logger.warning("Please add a max transport distance to the RMP csv file.")
+        
+    if count_data > 0:
+        if the_scenario.ndrOn:
+            error_message = "Running the OC step with NDR on requires that all candidate processor inputs have a " \
+                "max transport distance specified in the corresponding CSV input file."
+        else :
+            error_message = "Running the OC step with NDR off requires that all candidate " \
+                "processor inputs originate from raw material producers and have a max transport distance " \
+                "specified in the RMP CSV file."
+        logger.error(error_message)
         logger.warning("NOTE: run time for the optimization step increases with max transport distance.")
-        sys.exit()
+        raise Exception(error_message)
 
 
 # ===============================================================================
@@ -90,7 +100,7 @@ def check_max_transport_distance_for_OC_step(the_scenario, logger):
 
 def source_as_subcommodity_setup(the_scenario, logger):
     logger.info("START: source_as_subcommodity_setup")
-    # create  table source_commodity_ref that only has commodities that can flow out of a facility
+    # create table source_commodity_ref that only has commodities that can flow out of a facility
     # no multi commodity entry
     # does include entries even if there's no max transport distance, has a flag to indicate that
     multi_commodity_name = "multicommodity"
@@ -143,12 +153,10 @@ def source_as_subcommodity_setup(the_scenario, logger):
             and fc.commodity_id = c.commodity_id
             and fc.io = 'o'
             ;
-            --this will populated processors as potential sources for facilities, but with 
+            --this will populate processors as potential sources for facilities, but with 
             --max_transport_distance_flag set to 'N'
             
             --candidate_process_commodities data setup
-            -- TODO as of 2-25 this will throw an error if run repeatedly, 
-            -- adding columns to the candidate_process_commodities table
             
             drop table if exists candidate_process_commodities_temp;
 
@@ -2226,7 +2234,6 @@ def setup_pulp_problem_candidate_generation(the_scenario, logger):
     prob = create_constraint_conservation_of_flow_storage_vertices(logger, the_scenario, prob,
                                                                                    flow_vars, processor_excess_vars)
 
-    # TO DO: verify that conservation of flow method for endcap nodes functions with current layout of endcap nodes
     prob = create_constraint_conservation_of_flow_endcap_nodes(logger, the_scenario, prob, flow_vars,
                                                                processor_excess_vars)
 
@@ -2261,8 +2268,6 @@ def record_pulp_candidate_gen_solution(the_scenario, logger, zero_threshold):
 
     with sqlite3.connect(the_scenario.main_db) as db_con:
         
-        # TO DO: the non-zero variable count is never set to anything other than zero...
-        logger.info("number of solution variables greater than zero: {}".format(non_zero_variable_count))
         sql = """
             create table optimal_variables as
             select

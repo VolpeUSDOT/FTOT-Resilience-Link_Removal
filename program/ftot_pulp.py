@@ -277,11 +277,11 @@ def generate_all_vertices(the_scenario, schedule_dict, schedule_length, logger):
         counter = 0
         total_facilities = 0
 
-        for row in db_cur.execute("select count(distinct facility_id) from  facilities;"):
+        for row in db_cur.execute("select count(distinct facility_id) from facilities;"):
             total_facilities = row[0]
 
         # create vertices for each non-ignored facility facility
-        # facility_type can be "raw_material_producer", "ultimate_destination","processor";
+        # facility_type can be "raw_material_producer", "ultimate_destination", "processor"
         # get id from facility_type_id table
         # any other facility types are not currently handled
 
@@ -318,19 +318,25 @@ def generate_all_vertices(the_scenario, schedule_dict, schedule_length, logger):
 
                 # create processor vertices for any commodities that do not inherit max transport distance
                 proc_data = db_cur2.execute("""select fc.commodity_id,
-               ifnull(fc.quantity, 0),
-               fc.units,
-               ifnull(c.supertype, c.commodity_name),
-               fc.io,
-               mc.commodity_id,
-               c.commodity_name,
-                ifnull(s.source_facility_id, 0)
-               from facility_commodities fc, commodities c, commodities mc
-                left outer join source_commodity_ref s 
-                on (fc.commodity_id = s.commodity_id and s.max_transport_distance_flag = 'Y')
-               where fc.facility_id = {}
-               and fc.commodity_id = c.commodity_id
-               and mc.commodity_name = '{}';""".format(facility_id, multi_commodity_name))
+                                               ifnull(fc.quantity, 0),
+                                               fc.units,
+                                               ifnull(c.supertype, c.commodity_name),
+                                               fc.io,
+                                               mc.commodity_id,
+                                               c.commodity_name,
+                                               CASE 
+                                                 -- when MTD comm is i, then join w/ source commodity ref below and keep all
+                                                 when fc.io = 'i' then ifnull(s.source_facility_id, 0)
+                                                 -- when MTD comm is o and has MTD, then use keep one entry w/ facility id as source
+                                                 when fc.io = 'o' and c.max_transport_distance is not null then {}
+                                                 else 0
+                                               END
+                                               from facility_commodities fc, commodities c, commodities mc
+                                               left outer join source_commodity_ref s 
+                                               on (fc.commodity_id = s.commodity_id and fc.io = 'i' and s.max_transport_distance_flag = 'Y')
+                                               where fc.facility_id = {}
+                                               and fc.commodity_id = c.commodity_id
+                                               and mc.commodity_name = '{}';""".format(facility_id, facility_id, multi_commodity_name))
 
                 proc_data = proc_data.fetchall()
                 # entry for each incoming commodity and its potential sources
@@ -453,7 +459,8 @@ def generate_all_vertices(the_scenario, schedule_dict, schedule_length, logger):
                 fc.commodity_id,
                 ifnull(c.supertype, c.commodity_name),
                 ifnull(s.source_facility_id, 0),
-                io
+                io,
+                fc.udp
                 from facility_commodities fc, commodities c
                 left outer join source_commodity_ref s 
                 on (fc.commodity_id = s.commodity_id and s.max_transport_distance_flag = 'Y')
@@ -468,6 +475,7 @@ def generate_all_vertices(the_scenario, schedule_dict, schedule_length, logger):
                     commodity_supertype = row_b[4]
                     source_facility_id = row_b[5]
                     iob = row_b[6]
+                    udp = row_b[7]
                     zero_source_facility_id = 0  # material merges at primary vertex
 
                     # vertices for generic demand type, or any subtype specified by the destination
@@ -480,7 +488,7 @@ def generate_all_vertices(the_scenario, schedule_dict, schedule_length, logger):
                         {}, {}, {}, {}, {},
                         {}, '{}');""".format(facility_location_id, facility_id, facility_type_id, facility_name, day_before+1,
                                              commodity_id, availability, primary, quantity,
-                                             the_scenario.unMetDemandPenalty,
+                                             udp,
                                              zero_source_facility_id, iob))
                         main_db_con.execute("""insert or ignore into vertices (
                        location_id, facility_id, facility_type_id, facility_name, schedule_day, commodity_id, 
@@ -505,7 +513,7 @@ def generate_all_vertices(the_scenario, schedule_dict, schedule_length, logger):
                                                                  facility_name,
                                                                  day_before+1, new_commodity_id, availability, primary,
                                                                  quantity,
-                                                                 the_scenario.unMetDemandPenalty,
+                                                                 udp,
                                                                  zero_source_facility_id, iob))
                             main_db_con.execute("""insert or ignore into vertices (
                               location_id, facility_id, facility_type_id, facility_name, schedule_day, commodity_id, 
@@ -1943,11 +1951,6 @@ def pre_setup_pulp(logger, the_scenario):
     add_storage_routes(the_scenario, logger)
     generate_connector_and_storage_edges(the_scenario, logger)
 
-    from ftot_networkx import update_ndr_parameter
-
-    # Check NDR conditions before choosing optimizer
-    update_ndr_parameter(the_scenario, logger)
-
     if not the_scenario.ndrOn:
         # start edges for commodities that inherit max transport distance
         generate_first_edges_from_source_facilities(the_scenario, schedule_length, logger)
@@ -1991,7 +1994,6 @@ def create_flow_vars(the_scenario, logger):
             counter += 1
             # create an edge for each commodity allowed on this link - this construction may change
             # as specific commodity restrictions are added
-            # TODO add days, but have no schedule for links currently
             # running just with nodes for now, will add proper facility info and storage back soon
             edge_list.append((row[0]))
 
@@ -2364,29 +2366,32 @@ def create_constraint_daily_processor_capacity(logger, the_scenario, prob, flow_
                 and fc.units = '{}'
                 group by edge_id""".format(day, facility_id, units)):
                     input_edge_id = row_b[0]
-
                     flow_in.append(flow_var[input_edge_id])
+                
                 logger.debug(
                     "flow in for capacity constraint on processor facility {} day {} units {}: {}".format(facility_id, day, units, flow_in))
+                
+                daily_inflow_min_capacity = 0
+                daily_inflow_max_capacity = "Unconstrained"
 
                 # capacity is set to -1 if there is no restriction, so should be no constraint
                 if min_capacity >= 0:
                     daily_inflow_min_capacity = float(min_capacity) * float(daily_activity_level)
+                    prob += lpSum(flow_in) >= daily_inflow_min_capacity * processor_daily_flow_vars[(facility_id, day)], \
+                        "constraint min flow into processor {}, day {}, units {}".format(facility_id, day, units)
+
                 if max_capacity >= 0:
                     daily_inflow_max_capacity = float(max_capacity) * float(daily_activity_level)
                     prob += lpSum(flow_in) <= daily_inflow_max_capacity * processor_daily_flow_vars[(facility_id, day)], \
                         "constraint max flow into processor facility {}, day {}, units {}, flow var {}".format(
                             facility_id, day, units, processor_daily_flow_vars[facility_id, day])
                     if min_capacity < 0:
-                        # this is just to match the current default - if min is not specified, use half max
-                        daily_inflow_min_capacity = daily_inflow_max_capacity / 2
+                        logger.debug("Minimum capacity for processor facility {} not specified, defaulting to no minimum".format(facility_id))
+                
                 logger.debug(
                     "processor {}, day {}, units {}, input capacity min: {} max: {}".format(facility_id, day, units, daily_inflow_min_capacity,
                                                                              daily_inflow_max_capacity))
                 total_scenario_min_capacity = total_scenario_min_capacity + daily_inflow_min_capacity
-
-                prob += lpSum(flow_in) >= daily_inflow_min_capacity * processor_daily_flow_vars[
-                    (facility_id, day)], "constraint min flow into processor {}, day {}, units {}".format(facility_id, day, units)
 
             if is_candidate == 1:
                 # forces processor build var to be correct
@@ -3271,17 +3276,48 @@ def save_pulp_solution(the_scenario, prob, logger, zero_threshold):
         sql = "select count(variable_name) from optimal_solution where variable_name like 'UnmetDemand%';"
         data = db_con.execute(sql)
         optimal_unmet_demand_count = data.fetchone()[0]
-        logger.info("number facilities with optimal_unmet_demand : {}".format(optimal_unmet_demand_count))
-        sql = "select ifnull(sum(variable_value),0) from optimal_solution where variable_name like 'UnmetDemand%';"
-        data = db_con.execute(sql)
-        optimal_unmet_demand_sum = data.fetchone()[0]
-        logger.info("Total Unmet Demand : {}".format(optimal_unmet_demand_sum))
-        logger.info("Penalty per unit of Unmet Demand : ${0:,.0f}".format(the_scenario.unMetDemandPenalty))
+        logger.info("number of facilities with optimal_unmet_demand: {}".format(optimal_unmet_demand_count))
         
-        # Log breakdown
-        logger.result("Routing and Build Cost: \t {0:,.0f}".format(float(value(prob.objective)) - optimal_unmet_demand_sum * the_scenario.unMetDemandPenalty))
-        logger.result("Total Unmet Demand Penalty: \t {0:,.0f}".format(optimal_unmet_demand_sum * the_scenario.unMetDemandPenalty))
-         
+        # retrieving customized UDP values
+        logger.info("Calculating Unmet Demand Penalty costs")
+        custom_total_unmet_demand = 0
+        custom_total_penalty = 0
+
+        # get udp, id, unmet demand from optimal_solution table
+        sql = """
+            SELECT 
+                os.variable_name, 
+                os.variable_value
+            FROM 
+                optimal_solution os
+            WHERE
+                os.variable_name LIKE 'UnmetDemand_%'
+            """
+        customized_udp_data = db_cur.execute(sql).fetchall()
+
+        for row in customized_udp_data:
+            variable_name, unmet_demand = row
+            udp = float(variable_name.split(',')[-1].strip(')').strip("'").strip('_').replace('_', ''))
+
+            commodity_name = variable_name.split(',')[-2].strip('_').strip("'")
+
+            # get the destination name from facilities table to put into logger
+            facility_id = int(variable_name.split('(')[1].split(',')[0])
+            
+            # select a dest_ facility name
+            sql = f"""SELECT f.facility_name FROM facilities f join facility_type_id fti on f.facility_type_id = fti.facility_type_id WHERE f.facility_ID = {facility_id} and fti.facility_type = 'ultimate_destination'"""
+            facility_name = db_cur.execute(sql).fetchone()[0]
+
+            custom_total_unmet_demand += unmet_demand
+            custom_total_penalty += udp * unmet_demand
+
+            logger.info(f"Destination {facility_name} has unmet demand of {unmet_demand} for commodity {commodity_name} with an unmet demand penalty of {udp}")
+
+        # No longer useful if have both liquid and solid units
+        # logger.info(f"Total Unmet Demand: {custom_total_unmet_demand}")
+        logger.result("Routing and Build Cost: \t {0:,.0f}".format(float(value(prob.objective)) - custom_total_penalty))
+        logger.result("Total Unmet Demand Penalty: \t {0:,.0f}".format(custom_total_penalty))
+
         sql = "select count(variable_name) from optimal_solution where variable_name like 'Edge%';"
         data = db_con.execute(sql)
         optimal_edges_count = data.fetchone()[0]

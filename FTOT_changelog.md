@@ -1,5 +1,48 @@
 # FTOT Change Log
 
+## v2024_4
+
+The FTOT 2024.4 public release includes updates related to expansion of candidate generation and maximum transport distance functionalities, refinement of first-mile and last-mile costs, routing near limited access roadways, sensitivity analysis around delivery of demand to destinations, and updates to the Tableau dashboard. The user documentation has also been streamlined to improve the navigability and coordination across documents. The following changes have been made:
+*	Expanded FTOT's candidate generation functionality to allow users to generate candidate processors beyond the first step in the supply chain, and to set commodity maximum transport distances at any stage in the supply chain, when using network density reduction. 
+* Renamed the facility "unit cost" functionality from the 2024.3 release to facility "access cost". Reporting on access cost is now included in the report CSV file and is broken out by mode and facility.
+*	Updated the methodology for creating artificial links from facilities to the roadway network. This refinement ensures that facilities do not link to a limited access roadway (e.g., interstate highway) unless no non-limited access roadway is within the configured artificial link distance. This refinement increases the realism of scenario results by preventing most facilities from hooking into a one-way, limited access carriageway between interchanges.
+*	Created a new standalone tool to conduct a sensitivity analysis around FTOT's unmet demand penalty (UDP) parameter. This parameter controls the amount of the final product delivered to the destination facility or facilities. The tool identifies UDP value(s) corresponding to optimal routing scenarios with transport cost per unit of final delivered product within a user-specified range.
+*	In the Tableau workbook, updated the Cost Breakdown dashboard and the Parameters Table dashboard to include new input elements and output metrics, fixed a bug in facility utilization pie charts on the By Supply & Demand dashboard for facilities with multiple input or output commodities, and made other aesthetic improvements.
+*	Other updates:
+  * Fixed a bug in combining all_routes CSV reports for the Tableau scenario comparison dashboard.
+  * Deprecated the aggregate raster helper tool due to lack of use and availability of similar tools.
+  * Updated the Scenario Setup Template for new FTOT functionality around facility access cost and commodity-specific unmet demand penalties.
+See documentation files for additional details.
+
+
+## v2024_3
+
+The FTOT 2024.3 public release includes updates related to customization of first-mile and last-mile costs, custom demand fulfillment incentives by destination facility and commodity, default processor minimum capacities, the Tableau dashboard, as well as minor bug fixes and back-end improvements. The following changes have been made:
+* Added functionality to allow users to model several first-mile, last-mile related costs. By default, FTOT models transport to and from user-defined facilities via short artificial links that connect to the modal networks. By default, transport on these links follows local road costs and impedances. The 2024.3 release allows users to (1) specify different transport costs on these links through the XML, (2) impede artificial links differently than modal network links, (3) define additional facility unit costs by facility, commodity phase of matter, and in vs. out movements through the facility-commodity CSV files. These customizations are reflected in FTOT reporting outputs.
+* Expanded FTOT’s unmet demand penalty parameter (UDP) to allow for facility-specific and commodity-specific values. The default UDP parameter remains in the XML input file, which the user can overwrite or supplement with values in the destination facility-commodity CSV file. This allows the user to incentivize meeting demand at certain facilities (for certain commodities) by setting a higher UDP for that facility (or commodity).
+* Adjusted the default minimum processor capacity to be zero when the user specifies a maximum capacity but no minimum capacity. Previously, FTOT used a default minimum capacity of half the maximum capacity—the user can still define this by explicitly defining minimum capacity in an optional column in the processor facility-commodity CSV file.
+* In the Tableau workbook, fixed a bug in the bar chart tooltips in the By Supply & Demand dashboard and made various aesthetic improvements.
+* Other updates:
+  * Updated the ArcGIS dependency to require version 3.0 or higher.
+  * Created an automated testing suite for the development team to ensure functionality of the codebase and improve development processes.
+  * Fixed a logger warning that incorrectly indicated "Impedance weights file not specified", when an impedance weight file was specified.
+  * Fixed a bug with processor capacities that caused FTOT to overwrite a minimum total input or output capacity when both minimum and maximum total capacities were provided for inputs or outputs to a facility.
+See documentation files for additional details.
+
+
+## v2024_2
+
+The FTOT 2024.2 public release includes updates related to cost reporting outputs and visualizations, modeling of intermodal movement costs, scenario input validation, and back-end improvements to how the transportation network is processed and translated into NetworkX. The following changes have been made:
+* Developed additional FTOT outputs to explain and visualize costs associated with the optimal routing solution of a scenario. A new CSV report summarizes both scaled and unscaled costs by commodity and by mode. The scaled costs account for user-specified transport and CO2 cost scalars and are used in the optimization. Costs are categorized as movement costs (broken out into costs from transport, transloading, first mile/last mile, mode short haul penalties, and impedances), emissions costs (broken out into CO2 and CO2 first mile/last mile), processor build costs, and unmet demand penalties. A new Cost Breakdown dashboard in the Tableau workbook visualizes the scaled and unscaled cost components.
+* Updated the transport cost and routing cost methodology for intermodal movements. In addition to the transloading cost applied per unit moved between modes, transportation costs along the edges connecting the transloading facility to the rest of the FTOT network are now applied using the default per ton-mile (or thousand gallon-mile) costs of the mode that the transloading facility is connected to. The routing cost component from transport for intermodal movements is equivalent to the (unimpeded) transport cost.
+* Added new input validation checks to confirm alignment between facility geodatabase and facility-commodity input files. The user is provided log messages when all facilities in the facility-commodity input files fail to match with a facility location in the corresponding feature class of the geodatabase.
+* Updated method for hooking user-specified facilities into the network to ensure that all network segment attributes are passed down to split links (previously, only attributes that were part of the FTOT network specification were retained).
+* Other updates:
+  * Generalized FTOT code used to translate the network geodatabase into a NetworkX object to allow network segment attributes to be passed through the G step to support future extensions cost varying link cost based on other network attributes.
+  * Fixed a logging bug that was consistently printing out a warning to users that certain log files were not successfully added to the FTOT text report.
+See documentation files for additional details.
+
+
 ## v2024_1
 
 The FTOT 2024.1 public release includes updates related to the pipeline network, waterway background volume and capacity handling, FTOT Tools and the Scenario Setup Template, the Tableau routes dashboard, and network resilience analysis. The following changes have been made:
