@@ -30,6 +30,13 @@ def make_disruption_scenarios(disrupt_type, disrupt_steps, scen_path):
         if os.path.exists(disrupt_scen_path):
             shutil.rmtree(disrupt_scen_path)
         shutil.copytree(scen_path, disrupt_scen_path)
+
+        # Remove maps and reports folders if exist
+        if os.path.exists(os.path.join(disrupt_scen_path, 'Reports')):
+            shutil.rmtree(os.path.join(disrupt_scen_path, 'Reports'))
+        if os.path.exists(os.path.join(disrupt_scen_path, 'Maps')):
+            shutil.rmtree(os.path.join(disrupt_scen_path, 'Maps'))
+
     print('Prepared ' + str(disrupt_steps) + ' scenarios based on ' + os.path.split(scen_path)[1])
 
 
@@ -168,7 +175,7 @@ def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT, MAKE_MAPS)
 
         print('Preparing to search over ' + latest_log)
 
-        unmet_pattern = '(?:INFO\s+Total Unmet Demand : )(\d*.?\d*)'
+        # unmet_pattern = '(?:INFO\s+Total Unmet Demand : )(\d*.?\d*)'
         unmet_cost_pattern = '(?:RESULT\s+Total Unmet Demand Penalty:\s+)(\d+(?:,\d+)?)'
         nedge_pattern = '(?:INFO\s+number of optimal edges:\s+)(\d+)'
         total_cost_pattern = '(?:RESULT\s+Optimal Objective Value:\s+)(\d+(?:,\d+)?)'
@@ -179,22 +186,19 @@ def run_o_steps(disrupt_type, disrupt_steps, scen_path, PYTHON, FTOT, MAKE_MAPS)
         # Use https://www.garrickadenbuie.com/project/regexplain/ to test
         # Use noncapturing groups to find the line, then capture the numerical output
 
-        unmet_demand = []
         unmet_cost = []
         nedge = []
         total_cost = []
 
         with open(os.path.join(log_path, latest_log), 'r') as textfile:
             for line in textfile:
-                unmet_demand += re.findall(unmet_pattern, line)
                 unmet_cost += re.findall(unmet_cost_pattern, line)
                 nedge += re.findall(nedge_pattern, line)
                 total_cost += re.findall(total_cost_pattern, line)
 
-        z1 = zip(["{:02d}".format(step + 1)], unmet_demand, unmet_cost, nedge, total_cost)
+        z1 = zip(["{:02d}".format(step + 1)], unmet_cost, nedge, total_cost)
 
         results_df_step = pd.DataFrame(z1, columns = ['disrupt_step',
-                                                      'unmet_demand',
                                                       'unmet_cost',
                                                       'nedge',
                                                       'total_cost'])
