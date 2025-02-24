@@ -29,19 +29,24 @@ Run `simple_setup.bat` to ensure you have a working Python environment setup for
 
 Run Quick Start 1 and Quick Start 2 to verify that the installation is complete.
 
-## Modify FTOT
+## Modify FTOT code
 
-One file in the FTOT codebase needs to be modified for this resilience tool:
+This tool requires a baseline scenario be run on a modified version of the main FTOT code base. The specific modifications are in ftot_routing.py which is updated in the following ways:
 
-- `ftot_routing.py`
-	+ Modified to not add back in all interstates to the road network before optimizing the routing solution. Without this edit, an FTOT analysis of the road network always includes the national interstate system.
-	+ Modified to use only a 50-mile buffer around the selected area in the routing optimization. This makes the scenario analysis more specific to the local network of the FTOT analysis.
+ - To not add back in all interstates to the road network before optimizing the routing solution. Without this edit, an FTOT analysis of the road network always includes the national interstate system.
+ - To use only a 50-mile buffer around the selected area in the routing optimization. This makes the scenario analysis more specific to the local network of the FTOT analysis.
 
-You can either copy the version of this file from this Network Resilience Tool repository into your installed FTOT directory (e.g., `C:\FTOT\program`), or use the complete version of the FTOT codebase included in this repository, which has already modified the file. To do the latter, place all of the contents of the `\program` subfolder in this repository into `C:\FTOT\program`. (You can first rename `C:\FTOT\program` to a different name, e.g., `program_original`, to preserve the original contents.)
+To help ensure fully functional code when running the baseline scenario...
+1) Go into your installed FTOT directory (e.g., `C:\FTOT`) and rename the `\program` subfolder to `\program_original.`
+2) Then go to the downloaded Network Resilience Tool repository and copy the entire `\program` subfolder into `C:\FTOT`. The copied over code files already included the modified version of ftot_routing.py.
 
-## Using this code
+## Run Reference Scenario 7
 
-This code is written for Python 3.9, using a Jupyter notebook to interact with the outputs of FTOT runs, calculate network resiliency metrics, and carry out sequential link removal and recalculation of network performance.
+As an example baseline scenario, run Reference Scenario 7 using the modified FTOT code. Browse to `C:\FTOT\scenarios\reference_scenarios\rs7_capacity` and double-click `run_v7.bat`.
+
+## Set up the Network Resilience Tool Python environment
+
+The Network Resilience Tool code is written for Python 3.9 and uses a Jupyter notebook to interact with the outputs of FTOT runs, calculate network resiliency metrics, and carry out sequential link removal and recalculation of network performance.
 
 The Python dependencies for this resilience tool are detailed in `environment.yml` in the `\link_removal` subfolder. The following steps use [this reference](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#creating-an-environment-from-an-environment-yml-file) and assume you have an installation of Python 3.9 and conda.
 
@@ -57,21 +62,17 @@ You should see `FTOTnetworkEnv` show up as an available environment when checkin
 conda info --envs
 ```
 
+You only need to create the environment once.
+
+
+## Run the Network Resilience Tool
+
 You can then launch Jupyter by the following steps:
 
 ```
 conda activate FTOTnetworkEnv
 jupyter notebook
 ```
-
-You only need to create the environment once; thereafter, you can simply run `conda activate FTOTnetworkEnv` and `jupyter notebook`.
-
 If the Jupyter notebook instance launches with a warning about the kernel, you may need to manually select `FTOTnetworkEnv` as the kernel to use. If the `FTOTnetworkEnv` kernel fails to load, follow [these steps](https://stackoverflow.com/questions/54876404/unable-to-import-sqlite3-using-anaconda-python) to ensure all supporting files are present.
-
-## Run Reference Scenario 7
-
-Run Reference Scenario 7 using the modified FTOT code. Browse to `C:\FTOT\scenarios\reference_scenarios\rs7_capacity` and double-click `run_v7.bat`.
-
-## Conduct link rank and removal disruptions
 
 From the Jupyter notebook window, browse to `Conduct_Link_Removal.ipynb` to begin this module. Follow the instructions in the notebook.
