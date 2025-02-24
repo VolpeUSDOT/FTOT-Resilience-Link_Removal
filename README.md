@@ -4,11 +4,13 @@ The FTOT Network Resilience Tool: Link Rank and Removal (in this repository FTOT
 
 See the [FTOT homepage](https://volpeusdot.github.io/FTOT-Public) for general information about the Freight and Fuel Transportation Optimization Tool (FTOT).
 
-This tool runs disruptions of an optimal solution, removing network links sequentially based on one of two metrics: (1) a network property known as betweenness centrality, or (2) the volume of vehicles on roadway links. The tool assesses how resilient an optimal solution is to the removal of key links in the network.
+This Network Resilience Tool runs disruptions on an optimal routing solution, removing network links sequentially based on one of two metrics: (1) a network property known as betweenness centrality, or (2) the volume of vehicles on roadway links. The tool assesses how resilient an optimal solution is to the removal of key links in the network.
 
 This tool is compatible and has been tested with FTOT version [2024.4](https://github.com/VolpeUSDOT/FTOT-Public/releases/tag/2024.4) and will not work with previous versions of FTOT. This tool is compatible only with FTOT scenarios using just the **road** network and for which Network Density Reduction (NDR) is off. To confirm NDR is off, check the the NDR_On element in the scenario XML file is set to False.
 
-#### Requirements
+**For a walkthrough of setting up and running the tool, please see the Network Resilience Tool [tutorial video](https://www.youtube.com/watch?v=UBB9mLgOJjo).**
+
+## Requirements
 
 - `conda`
 - FTOT code
