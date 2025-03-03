@@ -1,14 +1,16 @@
 # FTOT-Resilience-Link_Removal
 
-FTOT Resilience Tool: Link Rank and Removal tool for assessing network resilience.
+The FTOT Network Resilience Tool: Link Rank and Removal (in this repository FTOT-Resilience-Link_Removal) is a modification of the base FTOT program for assessing network routing impacts due to disruption.
 
 See the [FTOT homepage](https://volpeusdot.github.io/FTOT-Public) for general information about the Freight and Fuel Transportation Optimization Tool (FTOT).
 
-This tool runs disruptions of an optimal solution, removing network links sequentially based on one of two metrics: (1) a network property known as betweenness centrality, or (2) the volume of vehicles on roadway links. The tool assesses how resilient an optimal solution is to the removal of key links in the network.
+This Network Resilience Tool runs disruptions on an optimal routing solution, removing network links sequentially based on one of two metrics: (1) a network property known as betweenness centrality, or (2) the volume of vehicles on roadway links. The tool assesses how resilient an optimal solution is to the removal of key links in the network.
 
-This tool is compatible and has been tested with FTOT version [2024.1](https://github.com/VolpeUSDOT/FTOT-Public/releases/tag/2024.1) and will not work with previous versions of FTOT. This tool is compatible only with FTOT scenarios using **only** the road network and for which Network Density Reduction (NDR) is off. To confirm NDR is off, check the the NDR_On element in the scenario XML file is set to False.
+This tool is compatible and has been tested with FTOT version [2024.4](https://github.com/VolpeUSDOT/FTOT-Public/releases/tag/2024.4) and will not work with previous versions of FTOT. This tool is compatible only with FTOT scenarios using just the **road** network and for which Network Density Reduction (NDR) is off. To confirm NDR is off, check the the NDR_On element in the scenario XML file is set to False.
 
-#### Requirements
+**For a walkthrough of setting up and running the tool, please see the Network Resilience Tool [tutorial video](https://www.youtube.com/watch?v=UBB9mLgOJjo).**
+
+## Requirements
 
 - `conda`
 - FTOT code
@@ -17,35 +19,40 @@ This tool is compatible and has been tested with FTOT version [2024.1](https://g
 
 ## Install `conda`
 
-This tool relies on the package management software `conda` to add all dependencies for this tool, separate from the standard FTOT requirements.
+This tool relies on the package management software `conda` to install all dependencies for this tool, separate from the standard FTOT requirements.
 
-You need either [miniconda](https://docs.conda.io/en/latest/miniconda.html) (1.2 mb) or the full [Anaconda](https://www.anaconda.com/products/distribution) (500+ mb) installation to activate a conda environment. The full Anaconda installation is recommended for most users.
+You need either [Anaconda](https://www.anaconda.com/products/distribution) or [miniconda](https://docs.conda.io/en/latest/miniconda.html) installed to activate a conda environment. The full Anaconda installation is recommended for most users.
 
 ## Install FTOT code
 
 [Download and install FTOT](https://volpeusdot.github.io/FTOT-Public/#getting-started) if you haven't already done so, and [download the documentation and scenarios](https://volpeusdot.github.io/FTOT-Public/data_download.html).
 
-Run `simple_setup.bat` to ensure you have a working Python environment set up for FTOT.
+Run `simple_setup.bat` to ensure you have a working Python environment setup for FTOT.
 
 Run Quick Start 1 and Quick Start 2 to verify that the installation is complete.
 
-## Modify FTOT
+## Modify FTOT code
 
-One file in the FTOT code needs to be modified for this resilience tool:
+This tool requires a baseline scenario be run on a modified version of the main FTOT code base. The specific modifications are in ftot_routing.py which is updated in the following ways:
 
-- `ftot_routing.py`
-	+ Modified to not add back in all interstates to the road network. Without this edit, an FTOT analysis of the road network always includes the national interstate system.
-	+ Modified to use only a 50 mile buffer around the selected area. This makes the scenario analysis more specific to the local network of the FTOT analysis.
+ - To not add back in all interstates to the road network before optimizing the routing solution. Without this edit, an FTOT analysis of the road network always includes the national interstate system.
+ - To use only a 50-mile buffer around the selected area in the routing optimization. This makes the scenario analysis more specific to the local network of the FTOT analysis.
 
-You can either copy the version of this file from this repository into your installed FTOT directory (e.g., `C:\FTOT\program`), or use the complete version of FTOT included in this repository, which has already modified the file. To do the latter, place all of the contents of the `\program` subfolder in this repository into `C:\FTOT\program`.
+To help ensure fully functional code when running the baseline scenario...
+1) Go into your installed FTOT directory (e.g., `C:\FTOT`) and rename the `\program` subfolder to `\program_original.`
+2) Then go to the downloaded Network Resilience Tool repository and copy the entire `\program` subfolder into `C:\FTOT`. The copied over code files already included the modified version of ftot_routing.py.
 
-## Using this code
+## Run Reference Scenario 7
 
-This code is written for Python 3.9, using Jupyter Notebooks to interact with the outputs of FTOT runs, calculate network resiliency metrics, and carry out sequential link removal and recalculation of network performance.
+As an example baseline scenario, run Reference Scenario 7 using the modified FTOT code. Browse to `C:\FTOT\scenarios\reference_scenarios\rs7_capacity` and double-click `run_v7.bat`.
+
+## Set up the Network Resilience Tool Python environment
+
+The Network Resilience Tool code is written for Python 3.9 and uses a Jupyter notebook to interact with the outputs of FTOT runs, calculate network resiliency metrics, and carry out sequential link removal and recalculation of network performance.
 
 The Python dependencies for this resilience tool are detailed in `environment.yml` in the `\link_removal` subfolder. The following steps use [this reference](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#creating-an-environment-from-an-environment-yml-file) and assume you have an installation of Python 3.9 and conda.
 
-From your Anaconda Prompt, navigate to the location where you cloned this repository, and then navigate to the `\link_removal` subfolder and run the following:
+From your Anaconda Prompt, navigate to the location where you cloned this repository and then navigate to the `\link_removal` subfolder and run the following:
 
 ```
 conda env create -f environment.yml
@@ -57,21 +64,29 @@ You should see `FTOTnetworkEnv` show up as an available environment when checkin
 conda info --envs
 ```
 
-You can then launch Jupyter Notebook by the following steps:
+You only need to create the environment once.
+
+
+## Run the Network Resilience Tool
+
+You can then launch Jupyter by the following steps:
 
 ```
 conda activate FTOTnetworkEnv
 jupyter notebook
 ```
+If the Jupyter notebook instance launches with a warning about the kernel, you may need to manually select `FTOTnetworkEnv` as the kernel to use. If the `FTOTnetworkEnv` kernel fails to load, follow [these steps](https://stackoverflow.com/questions/54876404/unable-to-import-sqlite3-using-anaconda-python) to ensure all supporting files are present.
 
-You only need to create the environment once; thereafter, you can simply run `conda activate FTOTnetworkEnv` and `jupyter notebook`.
+From the Jupyter notebook window, browse to `Conduct_Link_Removal.ipynb` to begin this module. Follow the instructions in the notebook.
 
-If the Jupyter Notebook instance launches with a warning about the kernel, you may need to manually select `FTOTnetworkEnv` as the kernel to use. If the `FTOTnetworkEnv` kernel fails to load, follow [these steps](https://stackoverflow.com/questions/54876404/unable-to-import-sqlite3-using-anaconda-python) to ensure all supporting files are present.
+#### Troubleshooting HTML Report Creation
+The final cells in the Conduct_Link_Removal.ipynb notebook generate the HTML report. If these cells error out and you do not see an HTML report pop up in your browser or appear in the disruption folder (located at the same place as your baseline scenario folder), please try the following steps:
 
-## Run Reference Scenario 7
+1) Open a new Anaconda Prompt window and activate the environment by running `conda activate FTOTnetworkEnv`
+2) Navigate to the link_removal subfolder: `cd C:\github\FTOT-Resilience-Link_Removal\link_removal`
+3) Run the following: `Rscript compile_report.R <BASELINE SCENARIO FOLDER> <DISRUPT TYPE>`. For example, for Reference Scenario 7 and disruption type 'V' for volume, run `Rscript compile_report.R C:\FTOT\scenarios\reference_scenarios\rs7_capacity V`
+4) If successful, the prompt window should print out "Output created: Disruption_Results.html".
+5) Return to the Conduct_Link_Removal.ipynb, scroll back down to Step 5 and re-run each cell underneath "Step 5" one-by-one by clicking into each cell, then from the top menu bar running Cell > Run Cells. You can alternatively click into each cell and press Ctrl + Enter.
+6) The report should appear in your browser window and should be saved in the disruption folder.
 
-Run Reference Scenario 7 using the modified FTOT code. Browse to `C:\FTOT\scenarios\reference_scenarios\rs7_capacity` and double-click `run_v7.bat`.
-
-## Conduct link rank and removal disruptions
-
-From the Jupyter Notebook window, browse to `Conduct_Link_Removal.ipynb` to begin this module.
+If needed, reach out to the FTOT team at FTOT-Team@dot.gov for assistance.

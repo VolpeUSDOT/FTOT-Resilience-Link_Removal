@@ -125,7 +125,7 @@ def prepare_tableau_assets(timestamp_directory, the_scenario, logger):
 
     # copy the relative path tableau TWB file from the common data director to
     # the timestamped tableau report directory
-    logger.debug("copying the twb file from common data to the timestamped tableau report folder.")
+    logger.debug("copying the twb file from common data to the timestamped tableau report directory")
     ftot_program_directory = os.path.dirname(os.path.realpath(__file__))
     root_twb_location = os.path.join(ftot_program_directory, "lib",  "tableau_dashboard.twb")
     scenario_twb_location = os.path.join(timestamp_directory, "tableau_dashboard.twb")
@@ -139,8 +139,16 @@ def prepare_tableau_assets(timestamp_directory, the_scenario, logger):
     report_file = os.path.join(timestamp_directory, report_file_name)
     copy(report_file, latest_generic_path)
 
-    # add all_routes report to assets location
-    logger.debug("adding routes report csv file to the tableau report directory")
+    # copy costs report to the assets location
+    latest_generic_path = os.path.join(timestamp_directory, "costs.csv")
+    logger.debug("copying the costs csv file to the timestamped tableau report directory")
+    cost_file_name = 'costs_' + TIMESTAMP.strftime("%Y_%m_%d_%H-%M-%S") + ".csv"
+    cost_file_name = clean_file_name(cost_file_name)
+    cost_file = os.path.join(timestamp_directory, cost_file_name)
+    copy(cost_file, latest_generic_path)
+
+    # copy all_routes report to the assets location
+    logger.debug("copying the routes report csv file to the timestamped tableau report directory")
     if the_scenario.ndrOn:
         # if NDR On, copy existing routes report
         latest_routes_path = os.path.join(timestamp_directory, "all_routes.csv")
@@ -153,7 +161,8 @@ def prepare_tableau_assets(timestamp_directory, the_scenario, logger):
         routes_file = os.path.join(timestamp_directory, "all_routes.csv")
         with open(routes_file, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['Run scenario with NDR on to view this dashboard.'])
+            writer.writerow(['scenario_name', 'route_id', 'from_facility', 'from_facility_type', 'to_facility', 'to_facility_type',
+                             'commodity_name', 'phase', 'mode', 'transport_cost', 'routing_cost', 'access_cost', 'length', 'co2', 'in_solution'])
    
     # create packaged workbook for tableau reader compatibility
     twbx_dashboard_filename = os.path.join(timestamp_directory, "tableau_dashboard.twbx")
@@ -164,6 +173,7 @@ def prepare_tableau_assets(timestamp_directory, the_scenario, logger):
     zipObj.write(os.path.join(timestamp_directory, "tableau_dashboard.twb"), "tableau_dashboard.twb")
     zipObj.write(os.path.join(timestamp_directory, "tableau_report.csv"), "tableau_report.csv")
     zipObj.write(os.path.join(timestamp_directory, "tableau_output.gdb.zip"), "tableau_output.gdb.zip")
+    zipObj.write(os.path.join(timestamp_directory, "costs.csv"), "costs.csv")
     zipObj.write(os.path.join(timestamp_directory, "all_routes.csv"), "all_routes.csv")
 
     # close the zip file
@@ -173,6 +183,7 @@ def prepare_tableau_assets(timestamp_directory, the_scenario, logger):
     os.remove(os.path.join(timestamp_directory, "tableau_dashboard.twb"))
     os.remove(os.path.join(timestamp_directory, "tableau_report.csv"))
     os.remove(os.path.join(timestamp_directory, "tableau_output.gdb.zip"))
+    os.remove(os.path.join(timestamp_directory, "costs.csv"))
     os.remove(os.path.join(timestamp_directory, "all_routes.csv"))
 
 
@@ -205,6 +216,7 @@ def generate_edges_from_routes_summary(timestamp_directory, the_scenario, logger
                                               mode text,
                                               transport_cost real,
                                               routing_cost real,
+                                              access_cost real,
                                               length real,
                                               co2 real,
                                               in_solution text
@@ -215,13 +227,15 @@ def generate_edges_from_routes_summary(timestamp_directory, the_scenario, logger
         if the_scenario.report_with_artificial:
             summary_route_data = db_con.execute("""select rr.route_id, f1.facility_name as from_facility, fti1.facility_type as from_facility_type,
                 f2.facility_name as to_facility, fti2.facility_type as to_facility_type,
-                c.commodity_name, c.phase_of_matter, m.mode, rr.transport_cost, rr.cost, rr.length, rr.co2,
+                c.commodity_name, c.phase_of_matter, m.mode, rr.transport_cost, rr.cost, nec1.access_cost + nec2.access_cost as access_cost, rr.length, rr.co2,
                 case when ors.scenario_rt_id is NULL then "N" else "Y" end as in_solution
                 from route_reference rr
                 join facilities f1 on rr.from_facility_id = f1.facility_id
                 join facility_type_id fti1 on f1.facility_type_id = fti1.facility_type_id
                 join facilities f2 on rr.to_facility_id = f2.facility_id
                 join facility_type_id fti2 on f2.facility_type_id = fti2.facility_type_id
+                join networkx_edge_costs nec1 on rr.first_nx_edge_id = nec1.edge_id and rr.phase_of_matter = nec1.phase_of_matter_id
+                join networkx_edge_costs nec2 on rr.last_nx_edge_id = nec2.edge_id and rr.phase_of_matter = nec2.phase_of_matter_id
                 join commodities c on rr.commodity_id = c.commodity_ID
                 left join (select temp.scenario_rt_id, case when temp.modes_list like "%,%" then "multimodal" else temp.modes_list end as mode
                            from (select re.scenario_rt_id, group_concat(distinct(nx_e.mode_source)) as modes_list
@@ -237,6 +251,7 @@ def generate_edges_from_routes_summary(timestamp_directory, the_scenario, logger
                 c.commodity_name, c.phase_of_matter, m.mode,
                 rr.transport_cost - (nec1.transport_cost + nec2.transport_cost) as transport_cost,
                 rr.cost, -- always keep artificial links in routing cost
+                nec1.access_cost + nec2.access_cost as access_cost, -- sum from artificial links on either end
                 rr.length - (ne1.length + ne2.length) as length,
                 rr.co2 - (nec1.co2_cost + nec2.co2_cost) / {} as co2,
                 case when ors.scenario_rt_id is NULL then "N" else "Y" end as in_solution
@@ -264,7 +279,7 @@ def generate_edges_from_routes_summary(timestamp_directory, the_scenario, logger
         with open(report_file, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(['scenario_name', 'route_id', 'from_facility', 'from_facility_type', 'to_facility', 'to_facility_type',
-                             'commodity_name', 'phase', 'mode', 'transport_cost', 'routing_cost', 'length', 'co2', 'in_solution'])
+                             'commodity_name', 'phase', 'mode', 'transport_cost', 'routing_cost', 'access_cost', 'length', 'co2', 'in_solution'])
 
             for row in summary_route_data:
                 route_id = row[0]
@@ -277,27 +292,236 @@ def generate_edges_from_routes_summary(timestamp_directory, the_scenario, logger
                 mode = row[7]
                 transport_cost = row[8]
                 routing_cost = row[9]
-                length = row[10]
-                co2 = row[11]
-                in_solution = row[12]
+                access_cost = row[10]
+                length = row[11]
+                co2 = row[12]
+                in_solution = row[13]
 
                 # append to list for batch update of DB table
                 all_routes_list.append([the_scenario.scenario_name, route_id, from_facility, from_facility_type, to_facility, to_facility_type,
-                                 commodity_name, phase, mode, transport_cost, routing_cost, length, co2, in_solution])
+                                 commodity_name, phase, mode, transport_cost, routing_cost, access_cost, length, co2, in_solution])
 
                 # print route data to file in Reports folder
                 writer.writerow([the_scenario.scenario_name, route_id, from_facility, from_facility_type, to_facility, to_facility_type,
-                                 commodity_name, phase, mode, transport_cost, routing_cost, length, co2, in_solution])
+                                 commodity_name, phase, mode, transport_cost, routing_cost, access_cost, length, co2, in_solution])
         
         # Update the DB table
         insert_sql = """
                 INSERT into all_routes_results
-                values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ;"""
 
         db_con.executemany(insert_sql, all_routes_list)
 
     logger.info("finish: generate_edges_from_routes_summary")
+
+
+# ==============================================================================================
+
+
+def generate_cost_breakdown_summary(timestamp_directory, the_scenario, logger):
+
+    logger.info("start: generate_cost_breakdown_summary")
+    report_file_name = 'costs_' + TIMESTAMP.strftime("%Y_%m_%d_%H-%M-%S") + '.csv'
+    report_file_name = clean_file_name(report_file_name)
+    report_file = os.path.join(timestamp_directory, report_file_name)
+
+    # set values we'll need later in method 
+    transp_scale = the_scenario.transport_cost_scalar
+    co2_scale = the_scenario.co2_cost_scalar
+    transload = {}
+    transload["solid"] = the_scenario.solid_transloading_cost.magnitude / 2
+    transload["liquid"] = the_scenario.liquid_transloading_cost.magnitude / 2
+    
+    with sqlite3.connect(the_scenario.main_db) as db_con:
+        # drop the costs summary table & recreate
+        sql = "drop table if exists costs_results;"
+        db_con.execute(sql)
+
+        sql = """create table costs_results(
+                                    commodity text,
+                                    mode text,
+                                    cost_family text,
+                                    cost_component text,
+                                    scaled_cost real,
+                                    unscaled_cost real,
+                                    scalar real
+                                    );
+                """
+        db_con.execute(sql)
+
+        # get route cost scaling for artificial = 1 links
+        artificial_impedances = {}
+        sql_artificial_imped = """select 
+                                    mode_source, 
+                                    avg(route_cost_scaling)
+                                    from networkx_edges 
+                                    where artificial = 1
+                                    group by mode_source, artificial"""
+        artificial_imped = db_con.execute(sql_artificial_imped).fetchall()
+        for row in artificial_imped:
+            mode = str(row[0])
+            route_cost_scaling = float(row[1])
+            artificial_impedances[mode] = route_cost_scaling - 1
+
+        # get segment cost data from DB
+        sql_segment_costs = """select 
+                                network_source_id,
+                                commodity_name,
+                                phase_of_matter,
+                                units,
+                                artificial,
+                                sum(commodity_flow * link_transport_cost) as transport,
+                                sum(commodity_flow * link_routing_cost_transport - commodity_flow * link_transport_cost - commodity_flow * link_access_cost) as route_add,
+                                sum(commodity_flow * link_co2_cost) as carbon,
+                                sum(commodity_flow * link_access_cost) as access_cost,
+                                sum(length) as tot_edge_length,
+                                sum(commodity_flow) as tot_commodity_flow,
+                                sum(length * commodity_flow) as tot_flow_length,
+                                count(distinct(network_source_oid)) as num_unique_edges
+                                from optimal_route_segments
+                                group by network_source_id, commodity_name, artificial"""
+        con_segment_costs = db_con.execute(sql_segment_costs)
+        segment_cost_data = con_segment_costs.fetchall()
+
+        # setup dictionaries to hold costs
+        costs = {}
+        costs["transport"] = {}
+        costs["transload"] = {}
+        costs["fmlm"] = {}
+        costs["impedance"] = {}
+        costs["penalty"] = {}
+        costs["co2"] = {}
+        costs["co2_fmlm"] = {}
+        costs["access_cost"] = {}
+
+        # iterate through costs from DB and compile across different link types (artificial)
+        for row in segment_cost_data:
+            mode = row[0]
+            commodity = row[1]
+            phase = row[2]
+            units = row[3]
+            artificial = int(row[4])
+            transport_cost = float(row[5])
+            route_add_cost = float(row[6])
+            carbon_cost = float(row[7])
+            access_cost = float(row[8])
+            len_edges = float(row[9])
+            flow_vol = float(row[10])
+            flow_vol_len = float(row[11])
+            edges_num = int(row[12])
+
+            if artificial == 0:
+                costs["transport"][(mode, commodity)] = costs["transport"].setdefault((mode, commodity),0) + transport_cost
+                costs["co2"][(mode, commodity)] = costs["co2"].setdefault((mode, commodity),0) + carbon_cost
+                costs["impedance"][(mode, commodity)] = costs["impedance"].setdefault((mode, commodity),0) + route_add_cost
+            elif artificial == 2:
+                costs["transload"][("multimodal", commodity)] = costs["transload"].setdefault(("multimodal", commodity),0) + flow_vol * transload[phase]
+                costs["transport"][(mode, commodity)] = costs["transport"].setdefault((mode, commodity),0) + transport_cost - (flow_vol * transload[phase])
+                costs["co2"][(mode, commodity)] = costs["co2"].setdefault((mode, commodity),0) + carbon_cost
+            elif artificial == 1:
+                costs["access_cost"][(mode, commodity)] = costs["access_cost"].setdefault((mode, commodity),0) + access_cost
+                costs["fmlm"][(mode, commodity)] = costs["fmlm"].setdefault((mode, commodity),0) + transport_cost
+                costs["co2_fmlm"][(mode, commodity)] = costs["co2_fmlm"].setdefault((mode, commodity),0) + carbon_cost
+                # calculate penalty and impedance from route_add_cost depending on mode
+                if mode in ["rail", "water"]:
+                    # artificial_impedances has base transport cost (impedance of 1.0) already subtracted out
+                    impeded = artificial_impedances[mode] * transport_cost
+                    penalty = route_add_cost - impeded
+                    costs["penalty"][(mode, commodity)] = costs["penalty"].setdefault((mode, commodity),0) + penalty
+                    costs["impedance"][(mode, commodity)] = costs["impedance"].setdefault((mode, commodity),0) + impeded
+                else : # mode is road or pipeline and has no penalty
+                    costs["impedance"][(mode, commodity)] = costs["impedance"].setdefault((mode, commodity),0) + route_add_cost
+        
+        # iterate through dictionary of costs and convert to lists for input to SQL table
+        costs_for_db = []
+        for cost_type in costs:
+            for (mode, commodity), cost in costs[cost_type].items():
+                if cost_type[:3] == "co2": # cost_type is CO2-related
+                    scaled_cost = cost * co2_scale
+                    costs_for_db.append([commodity, mode, "emissions", cost_type, round(cost,2), round(scaled_cost,2), co2_scale])
+                else: # cost_type is transport-related
+                    scaled_cost = cost * transp_scale
+                    costs_for_db.append([commodity, mode, "movement", cost_type, round(cost,2), round(scaled_cost,2), transp_scale])
+        
+        sql = """
+            insert into costs_results
+            values (?,?,?,?,?,?,?);
+            """
+        db_con.executemany(sql, costs_for_db)
+
+        sql_build_costs = """ -- build costs from optimal scenario results
+                            insert into costs_results
+                            select
+                            "",
+                            "",
+                            "build",
+                            "build_cost",
+                            round(value,2),
+                            round(value,2),
+                            1.0
+                            from optimal_scenario_results
+                            where measure is "processor_amortized_build_cost"
+                            and table_name is "scenario_summary"
+                            ;"""
+        db_con.execute(sql_build_costs)
+        
+        sql_UDP = """ --  UDP costs
+                            insert into costs_results
+                            select
+                              commodity,
+                              mode,
+                              cost_family,
+                              cost_component,
+                              round(sum(udp_cost)) as scaled_cost,
+                              round(sum(scaled_udp_cost)) as unscaled_cost,
+                              scalar
+                            from (select
+                              osr1.commodity,
+                              "" as mode,
+                              "unmet_demand" as cost_family,
+                              "unmet_demand_penalty" as cost_component,
+                              (osr1.value - ifnull(osr2.value, 0)) * fc.udp as udp_cost,
+                              (osr1.value - ifnull(osr2.value, 0)) * fc.udp as scaled_udp_cost,
+                              1.0 as scalar
+                              from (select f1.facility_name, f1.facility_id from facilities f1
+                              join facility_type_id fti on f1.facility_type_id = fti.facility_type_id
+                              where f1.ignore_facility != 'network' and fti.facility_type = "ultimate_destination") f
+                              left join (select * from optimal_scenario_results
+                              where measure = "destination_demand_potential"
+                              and mode = "total") osr1
+                              on f.facility_name = osr1.facility_name
+                              left join (select * from optimal_scenario_results
+                              where measure = "destination_demand_optimal"
+                              and mode = "allmodes") osr2
+                              on osr1.commodity = osr2.commodity
+                              and osr1.facility_name = osr2.facility_name
+                              left join commodities c
+                              on osr1.commodity = c.commodity_name
+                              left join facility_commodities fc
+                              on f.facility_id = fc.facility_id
+                              and c.commodity_id = fc.commodity_id
+                              ) temp
+                            group by commodity, mode, cost_family, cost_component, scalar
+                            ;"""
+        db_con.execute(sql_UDP)
+
+    with open(report_file, 'w', newline='') as wf:
+        writer = csv.writer(wf)
+        writer.writerow(['scenario_name', 'commodity', 'mode', 'cost_family', 'cost_component', 'unscaled_cost', 'scaled_cost', 'scalar'])
+
+        with sqlite3.connect(the_scenario.main_db) as db_con:
+
+            # query the optimal scenario results table and report out the results
+            # -------------------------------------------------------------------------
+            sql = "select * from costs_results order by cost_family, cost_component;"
+            db_cur = db_con.execute(sql)
+            data = db_cur.fetchall()
+
+            for row in data:
+                writer.writerow([the_scenario.scenario_name, row[0], row[1], row[2], row[3], row[4], row[5], row[6]])
+
+    logger.info("finish: generate_cost_breakdown_summary")
 
 
 # ==============================================================================================
@@ -453,6 +677,35 @@ def generate_artificial_link_summary(timestamp_directory, the_scenario, logger):
                                 group by facility_name, facility_type, commodity, mode
                                 ;""".format(the_scenario.default_units_currency)
         db_con.execute(sql_routing_costs_art)
+
+        sql_access_costs_art = """ -- artificial link access cost
+                                insert into artificial_link_results
+                                select facility_name, facility_type, commodity,
+                                'access_cost', mode, 'Y',
+                                sum(commodity_flow*link_access_cost),
+                                '{}'
+                                from (select
+                                      case when fac1.facility_name is not null and fac2.facility_name is null then fac1.facility_name
+                                      when fac1.facility_name is null and fac2.facility_name is not null then fac2.facility_name
+                                      else 'NA' end as facility_name,
+                                      case when fac1.facility_name is not null and fac2.facility_name is null then fac1.facility_type
+                                      when fac1.facility_name is null and fac2.facility_name is not null then fac2.facility_type
+                                      else 'NA' end as facility_type,
+                                      ors.commodity_name as commodity,
+                                      ors.network_source_id as mode,
+                                      ors.commodity_flow,
+                                      ors.link_access_cost
+                                      from optimal_route_segments ors
+                                      left join (select fac.facility_name, fti.facility_type, nn.node_id from facilities fac
+                                      left join facility_type_id fti on fac.facility_type_id = fti.facility_type_id
+                                      left join networkx_nodes nn on fac.location_id = nn.location_id) fac1 on ors.from_node_id = fac1.node_id
+                                      left join (select fac.facility_name, fti.facility_type, nn.node_id from facilities fac
+                                      left join facility_type_id fti on fac.facility_type_id = fti.facility_type_id
+                                      left join networkx_nodes nn on fac.location_id = nn.location_id) fac2 on ors.to_node_id = fac2.node_id
+                                      where ors.artificial = 1)
+                                group by facility_name, facility_type, commodity, mode
+                                ;""".format(the_scenario.default_units_currency)
+        db_con.execute(sql_access_costs_art)
         logger.debug("end: calculate transport and routing costs for artificial links")
 
         # length of network used on artificial links only
@@ -490,8 +743,10 @@ def generate_artificial_link_summary(timestamp_directory, the_scenario, logger):
         db_cur = db_con.execute(sql_mode_commodity)
         mode_and_commodity_list = db_cur.fetchall()
 
-        # use method from ftot_supporting_gis
-        attributes_dict = get_commodity_vehicle_attributes_dict(the_scenario, logger)
+    # use method from ftot_supporting_gis
+    attributes_dict = get_commodity_vehicle_attributes_dict(the_scenario, logger)
+
+    with sqlite3.connect(the_scenario.main_db) as db_con:
 
         # CO2 on artificial links only
         logger.debug("start: summarize emissions for artificial links")
@@ -678,11 +933,6 @@ def generate_detailed_emissions_summary(timestamp_directory, the_scenario, logge
 
 def generate_reports(the_scenario, logger):
     logger.info("start: parse log operation for reports")
-    
-    from ftot_networkx import update_ndr_parameter
-
-    # Check NDR conditions before reporting routes
-    update_ndr_parameter(the_scenario, logger)
 
     # make overall Reports directory
     report_directory = os.path.join(the_scenario.scenario_run_directory, "Reports")
@@ -696,6 +946,7 @@ def generate_reports(the_scenario, logger):
         os.makedirs(timestamp_directory)
 
     filetype_list = ['s', 'f', 'f2', 'c', 'c2', 'g', 'g2', 'o', 'o1', 'o2', 'oc', 'oc1', 'oc2', 'oc3', 'os', 'p']
+    filetype_reports_list = ['d', 'm', 'mb', 'mc', 'md', 'm2', 'm2b', 'm2c', 'm2d', 'test']
     # init the dictionary to hold them by type. for the moment ignoring other types.
     log_file_dict = {}
     for x in filetype_list:
@@ -712,14 +963,17 @@ def generate_reports(the_scenario, logger):
         path_to, the_file_name = ntpath.split(log_file)
 
         # split file name into type, "log", and date
-        file_parts = the_file_name.split("_",2)
+        file_parts = the_file_name.split("_", 2)
         the_type = file_parts[0]
         the_date = datetime.datetime.strptime(file_parts[2], "%Y_%m_%d_%H-%M-%S.log")
 
         if the_type in log_file_dict:
             log_file_dict[the_type].append((the_file_name, the_date))
         else:
-            logger.warning("The filename: {} is not supported in the logging".format(the_file_name))
+            if the_type not in filetype_reports_list:
+                logger.warning("The filename: {} is not supported in the logging".format(the_file_name))
+            else:
+                logger.debug("The filename: {} will not be added to report".format(the_file_name))
 
     # sort each log type list by datetime so the most recent is first
     for x in filetype_list:
@@ -1042,6 +1296,8 @@ def generate_reports(the_scenario, logger):
     # emissions summary
     if the_scenario.detailed_emissions_data != 'None':
         generate_detailed_emissions_summary(timestamp_directory, the_scenario, logger)
+
+    generate_cost_breakdown_summary(timestamp_directory, the_scenario, logger)
 
     # tableau workbook
     prepare_tableau_assets(timestamp_directory, the_scenario, logger)
