@@ -78,10 +78,10 @@ def checks_and_cleanup(the_scenario, logger):
 
 def create_locations_fc(the_scenario, logger):
     logger.info("start: create_locations_fc")
-    co_location_offet = 0.1
+    co_location_offset = 0.1
     logger.debug("co-location offset is necessary to prevent the locations from being treated as intermodal "
                  "facilities.")
-    logger.debug("collocation off-set: {} meters".format(co_location_offet))
+    logger.debug("collocation off-set: {} meters".format(co_location_offset))
 
     locations_fc = the_scenario.locations_fc
 
@@ -136,16 +136,16 @@ def create_locations_fc(the_scenario, logger):
 
                 # create a point for each location "out"
                 location_point = arcpy.Point()
-                location_point.X = row[1] + co_location_offet
-                location_point.Y = row[2] + co_location_offet
+                location_point.X = row[1] + co_location_offset
+                location_point.Y = row[2] + co_location_offset
                 location_point_geom = arcpy.PointGeometry(location_point, scenario_proj)
 
                 insert_cursor.insertRow([str(location_id) + "_OUT", location_id, location_point_geom])
 
                 # create a point for each location "in"
                 location_point = arcpy.Point()
-                location_point.X = row[1] - co_location_offet
-                location_point.Y = row[2] - co_location_offet
+                location_point.X = row[1] - co_location_offset
+                location_point.Y = row[2] - co_location_offset
                 location_point_geom = arcpy.PointGeometry(location_point, scenario_proj)
 
                 insert_cursor.insertRow([str(location_id) + "_IN", location_id, location_point_geom])
@@ -153,6 +153,46 @@ def create_locations_fc(the_scenario, logger):
     edit.stopOperation()
     edit.stopEditing(True)
 
+    loop_counter = 0
+    flag_list = ['placeholder'] # Have one item in it to begin with so it enters the loop
+    while len(flag_list) > 0:
+        loop_counter += 1
+        flag_list = [] # empty the list so if on first pass none are too close, it exits
+
+        for mode in the_scenario.permittedModes:
+            if arcpy.Exists(os.path.join(the_scenario.main_gdb, "tmp_{}_near".format(mode))):
+                arcpy.Delete_management(os.path.join(the_scenario.main_gdb, "tmp_{}_near".format(mode)))
+
+            arcpy.GenerateNearTable_analysis(locations_fc, os.path.join(the_scenario.base_network_gdb, 'network', mode),
+                                             os.path.join(the_scenario.main_gdb, "tmp_{}_near".format(mode)),
+                                             '0.1 Meters', "LOCATION", "NO_ANGLE", "CLOSEST")
+
+            # make list of objectIDs of features that are too close
+            with arcpy.da.SearchCursor(os.path.join(the_scenario.main_gdb, "tmp_{}_near".format(mode)), ['IN_FID', 'NEAR_DIST']) as scursor:
+                for row in scursor:
+                    if row[1] < .1: # Or near 0, whatever the tolerance needs to be
+                        flag_list.append(row[0])
+
+        if len(flag_list) > 0: # if any locations are too close, move them
+            logger.info('Iteration counter = {}'.format(loop_counter))
+            logger.info('Facility locations too close to modal networks. List to move: {}'.format(flag_list))
+            # Move the ones that are too close
+            with arcpy.da.UpdateCursor(locations_fc, ['OBJECTID', 'SHAPE@']) as ucursor:
+                for row in ucursor:
+                    if row[0] in flag_list:
+                        logger.debug('Facility OID: {}. Original location: X {}, Y {}. New location X {}, Y {}.'.format(row[0], row[1].centroid.X, row[1].centroid.Y, row[1].centroid.X + co_location_offset, row[1].centroid.Y - co_location_offset))
+                        new_point = arcpy.Point(row[1].centroid.X + co_location_offset, row[1].centroid.Y - co_location_offset)
+                        new_geometry = arcpy.PointGeometry(new_point, row[1].spatialReference)
+                        row[1] = new_geometry            
+
+                        ucursor.updateRow(row)
+        
+        if loop_counter == 25:
+            error = "Code loop to move locations off the network has run 25 times, review locations_fc layer. Exiting."
+            logger.error(error)
+            raise Exception(error)
+
+    # If there were any that were too close, this loop will now repeat and perform the check again
     logger.debug("finish: create_locations_fc")
 
 
@@ -502,7 +542,7 @@ def locations_add_links(logger, the_scenario, modal_layer_name, max_artificial_l
     scenario_gdb = the_scenario.main_gdb
     arcpy.env.workspace = the_scenario.main_gdb
     fp_to_modal_layer = os.path.join(scenario_gdb, "network", modal_layer_name)
-    scenario_proj = ftot_supporting_gis.get_coordinate_system(the_scenario)  
+    scenario_proj = ftot_supporting_gis.get_coordinate_system(the_scenario)
 
     locations_fc = the_scenario.locations_fc
     arcpy.DeleteField_management(fp_to_modal_layer, "LOCATION_ID")
@@ -770,18 +810,18 @@ def locations_add_links(logger, the_scenario, modal_layer_name, max_artificial_l
 
     # delete the old features
     # ------------------------
-    logger.debug("start:  delete old features (tmp_near, tmp_near_2, tmp_nodes)")
+    logger.debug("start:  delete old features (tmp_near, tmp_near_limited_access_fallback)")
     if arcpy.Exists(os.path.join(scenario_gdb, "tmp_near")):
         arcpy.Delete_management(os.path.join(scenario_gdb, "tmp_near"))
 
     if arcpy.Exists(os.path.join(scenario_gdb, "tmp_near_limited_access_fallback")):
         arcpy.Delete_management(os.path.join(scenario_gdb, "tmp_near_limited_access_fallback"))
 
-    if arcpy.Exists(os.path.join(scenario_gdb, "tmp_near_2")):
-        arcpy.Delete_management(os.path.join(scenario_gdb, "tmp_near_2"))
-
     if arcpy.Exists(os.path.join(scenario_gdb, "tmp_nodes")):
         arcpy.Delete_management(os.path.join(scenario_gdb, "tmp_nodes"))
+
+    if arcpy.Exists(os.path.join(scenario_gdb, "tmp_near_2")):
+        arcpy.Delete_management(os.path.join(scenario_gdb, "tmp_near_2"))
 
     # add artificial links
     # now that the lines have been split add lines from the from points to the nearest node
@@ -872,12 +912,16 @@ def locations_add_links(logger, the_scenario, modal_layer_name, max_artificial_l
 
     # Cleanup
     logger.debug("start:  cleanup tmp_fcs")
-    arcpy.Delete_management(os.path.join(scenario_gdb, "tmp_nodes"))
-    arcpy.Delete_management(os.path.join(scenario_gdb, "tmp_near_2"))
+    if arcpy.Exists(os.path.join(scenario_gdb, "tmp_nodes")):
+        arcpy.Delete_management(os.path.join(scenario_gdb, "tmp_nodes"))
+    if arcpy.Exists(os.path.join(scenario_gdb, "tmp_near_2")):
+        arcpy.Delete_management(os.path.join(scenario_gdb, "tmp_near_2"))
 
     if "pipeline" in modal_layer_name:
-        arcpy.Delete_management(modal_layer_name + "_points_dissolved")
-        arcpy.Delete_management(modal_layer_name + "_points")
+        if arcpy.Exists(modal_layer_name + "_points_dissolved"):
+            arcpy.Delete_management(modal_layer_name + "_points_dissolved")
+        if arcpy.Exists(modal_layer_name + "_points"):
+            arcpy.Delete_management(modal_layer_name + "_points")
 
     logger.debug("finish: locations_add_links")
 
@@ -1035,7 +1079,7 @@ def minimum_bounding_geometry(the_scenario, logger):
         # Additionally keep any limited access roadways regardless of whether they fall within the selection
         # Note this won't do anything if limited access isn't populated in the network
         # <<>> For Resilience Link Removal Tool, do not add back these roadways <<>>
-        # arcpy.SelectLayerByAttribute_management("road_lyr", "REMOVE_FROM_SELECTION", "Limited_Access = 1")
+        #arcpy.SelectLayerByAttribute_management("road_lyr", "REMOVE_FROM_SELECTION", "Limited_Access = 1")
 
         # Delete the features outside the buffer
         with arcpy.da.UpdateCursor('road_lyr', ['OBJECTID']) as ucursor:

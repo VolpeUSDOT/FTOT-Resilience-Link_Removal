@@ -21,7 +21,7 @@ except ImportError:
     print("This script requires the lxml Python library to validate the XML scenario file.")
     print("Download the library here: https://pypi.python.org/pypi/lxml/2.3")
     print("Exiting...")
-    sys.exit()
+    sys.exit(1)
     
 
 # ======================================================================================================================
@@ -31,7 +31,7 @@ except ImportError:
 
 tools_dir = os.path.split(os.path.realpath(__file__))[0]
 ftot_program_directory = os.path.split(tools_dir)[0]
-xml_template_file_location = os.path.join(ftot_program_directory, "lib", "v7_temp_Scenario.xml")
+xml_template_file_location = os.path.join(ftot_program_directory, "lib", "v8_temp_Scenario.xml")
 
 
 # ======================================================================================================================

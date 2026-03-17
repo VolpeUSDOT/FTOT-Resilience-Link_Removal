@@ -102,6 +102,14 @@ def make_networkx_graph(the_scenario, logger):
     logger.debug("start: set 'reversed' attribute in H")
     nx.set_edge_attributes(H, 1, "REVERSED")
 
+    # remove reversed one-way links before adding to the original graph
+    # makes redundant removal of reversed one-way links in clean_networkx_graph
+    for u, v, k, direction in list(H.edges(keys=True, data='Dir_Flag')):
+        # do not want to remove one-way pipeline intermodal artificial links in the reversed graph
+        if not ('pipeline' in H.edges[u, v, k]['Mode_Type'] and H.edges[u, v, k]['Artificial'] == 2):
+            if direction == 1:
+                H.remove_edge(u, v, k)
+
     # add the two graphs together
     logger.debug("start: compose G and H")
     G = nx.compose(G, H)
@@ -337,7 +345,7 @@ def multi_shortest_paths(stuff_to_pass):
 
 def get_link_costs(the_scenario, factors_dict, phase_of_matter, edge_attr, logger):
     # returns routing cost (combining impeded transport cost and carbon cost), transport cost,
-    #    impeded transport cost, carbon cost, and access cost (added to artificial links)
+    # impeded transport cost, transloading cost, carbon cost, and access cost (added to artificial links)
 
     # load weights (0-1) for each component of routing cost
     transport_weight = the_scenario.transport_cost_scalar
@@ -359,12 +367,15 @@ def get_link_costs(the_scenario, factors_dict, phase_of_matter, edge_attr, logge
     # DB will skip, graph will set to returned value 
     if phase_of_matter == 'solid' and 'pipeline' in mode_source:
         hi_val = 999999999
-        return hi_val, hi_val, hi_val, hi_val, hi_val
+        return hi_val, hi_val, hi_val, hi_val, hi_val, hi_val
 
     # default costs for routing and CO2 are in USD / ton-mi
     link_transport_cost = get_link_transport_cost(the_scenario, phase_of_matter, mode_source, artificial, logger)
     link_co2_cost = get_link_co2_cost(the_scenario, factors_dict, phase_of_matter, mode_source, artificial, urban, limited_access, logger)
     
+    # transload cost
+    transload_cost = 0
+
     # co2 cost
     co2_cost = length * link_co2_cost
 
@@ -424,15 +435,11 @@ def get_link_costs(the_scenario, factors_dict, phase_of_matter, edge_attr, logge
         # use road transport cost for first/last mile regardless of mode
         transport_cost = length * link_transport_cost
 
-        # set short haul penalty for rail and water
-        if mode_source == "rail" and phase_of_matter == "solid":
+        # set short haul penalty for rail and water - liquids converted to solid using densities
+        if mode_source == "rail":
             penalty = ((the_scenario.solid_truck_base_cost * route_cost_scaling - the_scenario.solid_railroad_class_1_cost) * the_scenario.rail_short_haul_penalty).magnitude
-        elif mode_source == "rail" and phase_of_matter == "liquid":
-            penalty = ((the_scenario.liquid_truck_base_cost * route_cost_scaling - the_scenario.liquid_railroad_class_1_cost) * the_scenario.rail_short_haul_penalty).magnitude
-        elif mode_source == "water" and phase_of_matter == "solid":
+        elif mode_source == "water":
             penalty = ((the_scenario.solid_truck_base_cost * route_cost_scaling - the_scenario.solid_barge_cost) * the_scenario.water_short_haul_penalty).magnitude
-        elif mode_source == "water" and phase_of_matter == "liquid":
-            penalty = ((the_scenario.liquid_truck_base_cost * route_cost_scaling - the_scenario.liquid_barge_cost) * the_scenario.water_short_haul_penalty).magnitude
         else:
             # road or pipeline: no short hual penalty
             penalty = 0
@@ -440,29 +447,27 @@ def get_link_costs(the_scenario, factors_dict, phase_of_matter, edge_attr, logge
         # routing cost for artificial links
         transport_routing_cost = transport_cost * route_cost_scaling + penalty/2 + access_cost
 
-    elif artificial == 2:
-        if phase_of_matter == "solid":
-            transloading_cost = the_scenario.solid_transloading_cost.magnitude
-        elif phase_of_matter == "liquid":
-            transloading_cost = the_scenario.liquid_transloading_cost.magnitude
+    elif artificial == 2: 
+        # All costs are in solids - liquids converted to solid using densities
+        transloading_cost = the_scenario.solid_transloading_cost.magnitude
 
         # set length-based cost of transporting materials along length of artificial link
         # except for pipeline, which continues to set this value at 0
         if 'pipeline' in mode_source: 
-            transport_component = 0
+            transport_cost = 0
         else : 
-            transport_component = length * link_transport_cost 
-
-        transport_cost = transport_component + transloading_cost / 2.00  # this is the transloading fee
-        # divide transloading cost by 2 to apply half on in-edge and half on out-edge
+            transport_cost = length * link_transport_cost
         transport_routing_cost = transport_cost
+
+        transload_cost = transloading_cost / 2.0 # this is the transloading fee
+        # divide transloading cost by 2 to apply half on in-edge and half on out-edge
 
     else:
         logger.warning("artificial code of {} is not supported!".format(artificial))
     
-    route_cost = transport_weight * transport_routing_cost + co2_weight * co2_cost
+    route_cost = transport_weight * (transport_routing_cost + transload_cost) + co2_weight * co2_cost
 
-    return route_cost, transport_cost, transport_routing_cost, co2_cost, access_cost
+    return route_cost, transport_cost, transport_routing_cost, transload_cost, co2_cost, access_cost
 
 
 # -----------------------------------------------------------------------------
@@ -764,7 +769,7 @@ def make_od_pairs(the_scenario, logger):
             cpc.io,
             cpc.commodity_id,
             tmp.node_id as dest_node,
-            tmp.phase_of_matter
+            cpc.phase_of_matter
             from
             endcap_nodes en
             join candidate_process_commodities cpc on en.process_id = cpc.process_id
@@ -1074,13 +1079,13 @@ def make_max_transport_distance_subgraphs(the_scenario, logger, commodity_subgra
         # For facility, MTD in commodities_with_mtd[commodity_id]
         if 'MTD' in commodity_dict:
             MTD = commodity_dict['MTD']
+            logger.info(f"Finding MTD subgraph for {len(commodity_dict['facilities'])} facilities.")
             for facility_node_id in commodity_dict['facilities']:
                 # If 'facility_subgraphs' dictionary for commodity_subgraph_dict[commodity_id] doesn't exist, add it
                 if 'facility_subgraphs' not in commodity_subgraph_dict[commodity_id]:
                     commodity_subgraph_dict[commodity_id]['facility_subgraphs'] = {}
-                
+
                 # Use shortest path to find the nodes that are within MTD
-                logger.info("start: dijkstra for facility node ID " + str(facility_node_id))
                 G = commodity_subgraph_dict[commodity_id]['subgraph']
                 # distances: key = node ids within cutoff, value = length of paths
                 # endcaps: key = node ids within cutoff, value = list of nodes labeled as endcaps
@@ -1088,8 +1093,6 @@ def make_max_transport_distance_subgraphs(the_scenario, logger, commodity_subgra
                 # distances, paths = nx.single_source_dijkstra(G, facility_node_id, cutoff = MTD, weight = 'Length')
                 fn_length = lambda u, v, d: min(attr.get('Length', 1) for attr in d.values())
                 distances, endcaps = dijkstra(G, facility_node_id, fn_length, cutoff=MTD)
-
-                logger.info("start: distances/paths for facility node ID " + str(facility_node_id))
                 
                 # Creates a subgraph of the nodes and edges that are reachable from the facility
                 commodity_subgraph_dict[commodity_id]['facility_subgraphs'][facility_node_id] = G.subgraph(distances.keys()).copy()
@@ -1098,17 +1101,15 @@ def make_max_transport_distance_subgraphs(the_scenario, logger, commodity_subgra
                 if not os.path.exists(the_scenario.processor_candidates_commodity_data) and the_scenario.processors_candidate_slate_data != 'None':
                     # Only create endcaps if commodity at facility is an input for a candidate process
                     if any(commodity_id in val for val in candidate_processes.values()):
-                        ends[facility_node_id] = {}
-                        ends[facility_node_id]['ends'] = endcaps
-                        ends[facility_node_id]['ends'].extend([node for node in commodity_subgraph_dict[commodity_id]['dest_facilities'] if node in commodity_subgraph_dict[commodity_id]['facility_subgraphs'][facility_node_id]])
+                        ends[(facility_node_id, commodity_id)] = endcaps
+                        ends[(facility_node_id, commodity_id)].extend([node for node in commodity_subgraph_dict[commodity_id]['dest_facilities'] if node in commodity_subgraph_dict[commodity_id]['facility_subgraphs'][facility_node_id]])
                         if 'intermodal_facilities' in commodity_subgraph_dict[commodity_id]:
-                            ends[facility_node_id]['ends'].extend([node for node in commodity_subgraph_dict[commodity_id]['intermodal_facilities'] if node in commodity_subgraph_dict[commodity_id]['facility_subgraphs'][facility_node_id]])
+                            ends[(facility_node_id, commodity_id)].extend([node for node in commodity_subgraph_dict[commodity_id]['intermodal_facilities'] if node in commodity_subgraph_dict[commodity_id]['facility_subgraphs'][facility_node_id]])
                         # for node in commodity_subgraph_dict[commodity_id]['dest_facilities']:
                         #     if node in commodity_subgraph_dict[commodity_id]['facility_subgraphs'][facility_node_id] :
                         #         ends[facility_node_id]['ends'].append(node)
-                        ends[facility_node_id]['commodity_id'] = commodity_id     
 
-                logger.info("end: distances/paths for facility node ID " + str(facility_node_id))
+            logger.info(f"Done finding facility subgraphs.")
 
     # If in G1 step for candidate generation, add endcaps to endcap_nodes table
     if not os.path.exists(the_scenario.processor_candidates_commodity_data) and the_scenario.processors_candidate_slate_data != 'None':                 
@@ -1130,28 +1131,30 @@ def make_max_transport_distance_subgraphs(the_scenario, logger, commodity_subgra
             ;"""
             db_cur.execute(sql)
 
-            for facility_node_id in ends:
-                logger.info("Updating endcap_nodes for facility node ID " + str(facility_node_id))
-                commodity_id = ends[facility_node_id]['commodity_id']
-                end_list = ends[facility_node_id]['ends']
-                for i in range(len(end_list)):
-                    sql = """insert or replace into tmp_endcap_nodes (node_id, location_id, mode_source, source_node_id, commodity_id, destination_yn)
-                             values({}, NULL, NULL, {}, {}, NULL);""".format(end_list[i], facility_node_id, commodity_id)
-                    db_cur.execute(sql)
-                    db_cur.commit()
+            # Add endcap nodes to tmp DB table, but efficiently!
+            endcap_nodes_for_db = []
+            logger.info(f"Preparing endcap nodes for {len(ends)} facilities")
+                
+            for (facility_node_id, commodity_id) in ends:
+                # Retrieve list of reachable nodes for this facility/commodity
+                end_list = ends[(facility_node_id, commodity_id)]
+                
+                # Add each node to the master list
+                for end_node in end_list:
+                    # Append tuple matching the 'VALUES' placeholders below
+                    endcap_nodes_for_db.append((end_node, facility_node_id, commodity_id))
             
-            sql = """alter table tmp_endcap_nodes
-                     add column source_facility_id;"""
-            db_cur.execute(sql)
-
-            sql = """update tmp_endcap_nodes
-                     set source_facility_id = (select temp.source_facility_id
-                                               from (select en.source_node_id, f.facility_id as source_facility_id
-									                 from tmp_endcap_nodes en
-									                 join networkx_nodes n on en.source_node_id = n.node_id
-                                                     join facilities f on f.location_id = n.location_id) temp
-									           where tmp_endcap_nodes.source_node_id = temp.source_node_id)"""
-            db_cur.execute(sql)
+            # Perform the bulk insert
+            if endcap_nodes_for_db:
+                sql = """
+                    INSERT OR REPLACE INTO tmp_endcap_nodes 
+                    (node_id, location_id, mode_source, source_node_id, commodity_id, destination_yn)
+                    VALUES (?, NULL, NULL, ?, ?, NULL);
+                """
+                db_cur.executemany(sql, endcap_nodes_for_db)
+                db_cur.commit()
+                
+            logger.info(f"Successfully updated endcap_nodes with {len(endcap_nodes_for_db)} records.")
             
             sql = """drop table if exists endcap_nodes;"""
             db_cur.execute(sql)
@@ -1179,15 +1182,17 @@ def make_max_transport_distance_subgraphs(the_scenario, logger, commodity_subgra
                         tmp.location_id,
                         tmp.mode_source,
                         tmp.source_node_id,
-                        tmp.source_facility_id,
+                        f.facility_id as source_facility_id,
                         tmp.commodity_id,
                         cpc.process_id,
-                        nwx.shape_x,
-                        nwx.shape_y,
+                        nne.shape_x,
+                        nne.shape_y,
                         tmp.destination_yn
                         from tmp_endcap_nodes tmp
                         join candidate_process_commodities cpc on tmp.commodity_id = cpc.commodity_id
-                        join networkx_nodes nwx on tmp.node_id = nwx.node_id"""
+                        join networkx_nodes nne on tmp.node_id = nne.node_id
+                        join networkx_nodes nns on tmp.source_node_id = nns.node_id
+                        join facilities f on f.location_id = nns.location_id"""
             db_cur.execute(sql)
 
             sql = "drop table if exists tmp_endcap_nodes;"
@@ -1289,10 +1294,10 @@ def get_impedances(the_scenario, logger):
 
     if not os.path.exists(the_scenario.impedance_weights_data):
         logger.warning("Warning: Cannot find impedance_weights_data file. The base cost will be applied to all links.")
-        return road_impedance_weights_dict, rail_impedance_weights_dict, water_impedance_weights_dict
+        return road_impedance_weights_dict, rail_impedance_weights_dict, water_impedance_weights_dict, artificial_impedance_weights_dict
 
 
-    with open(the_scenario.impedance_weights_data, 'rt') as f:
+    with open(the_scenario.impedance_weights_data, 'rt', encoding='utf-8-sig') as f:
         reader = csv.DictReader(f)
         for row in reader:
             mode = str(row["mode"]).lower()
@@ -1320,6 +1325,38 @@ def get_impedances(the_scenario, logger):
                     logger.debug(f"Artificial impedance weights dict key is {link_type} and value is {weight}")
 
     return road_impedance_weights_dict, rail_impedance_weights_dict, water_impedance_weights_dict, artificial_impedance_weights_dict
+
+
+# ------------------------------------------------------------------------------
+
+
+def get_speeds_times(the_scenario, logger):
+    # add link_type speeds and node_type times into the corresponding modal dictionaries
+    # NOTE: link_type values are NOT case-sensitive
+    speeds = {"road": {'': None}, "rail": {'': None}, "water": {'': None}, "pipeline_crude_trf_rts": {'': None}, "pipeline_prod_trf_rts": {'': None}}
+    times = {"locks": None, "intermodal": None}
+
+    if not os.path.exists(the_scenario.speed_time_data):
+        logger.warning("Warning: Cannot find speeds CSV file. Travel time reporting will not be available.")
+    else:
+        with open(the_scenario.speed_time_data, 'rt', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                type = str(row["type"]).lower()
+                mode = str(row["mode"]).lower()
+                if mode.startswith("pipeline"):
+                    if mode == 'pipeline_crude' or mode == 'pipeline_prod':
+                        mode += '_trf_rts'
+                link_type = str(row["link_type"]).lower()
+                speed = float(row["speed"]) if len(row["speed"]) > 0 else None
+                time = float(row["time"])if len(row["time"]) > 0 else None
+
+                if type == "link":
+                    speeds.setdefault(mode,{})[link_type] = speed
+                elif type == "node":
+                    times[mode] = time
+
+    return speeds, times
 
 
 # ------------------------------------------------------------------------------
@@ -1402,6 +1439,8 @@ def clean_networkx_graph(the_scenario, G, logger):
 
             # Handle directionality for all modes
             direction = G.edges[u, v, keys]["Dir_Flag"]
+            # Note: this if statement is redundant, reversed one-way links are
+            # removed in  make_networkx_graph.
             if direction == 1 and reversed_link == 1:
                 G.remove_edge(u, v, keys)
                 deleted_edge_count += 1
@@ -1470,9 +1509,18 @@ def clean_networkx_graph(the_scenario, G, logger):
             elif 'pipeline' in mode_type:
 
                 # convert pipeline tariff costs
-                pipeline_tariff_cost = "{} {}/barrel".format(float(G.edges[u, v, keys]['base_rate']), the_scenario.default_units_currency)
+                pipeline_tariff_cost = "{} {}/oil_barrel".format(float(G.edges[u, v, keys]['base_rate']), the_scenario.default_units_currency)
+
+                # Use avg density for crude pipeline and petroleum, then convert to mass using density (default units solid phase)
+                if mode_type == "pipeline_prod_trf_rts":
+                    average_density = Q_('800 kg/m^3').to(f"{the_scenario.default_units_solid_phase}/{the_scenario.default_units_liquid_phase}").magnitude
+                elif mode_type == "pipeline_crude_trf_rts": # crude pipeline
+                    average_density = Q_('874 kg/m^3').to(f"{the_scenario.default_units_solid_phase}/{the_scenario.default_units_liquid_phase}").magnitude
+                else:
+                    average_density = -9999 # should never reach this value
+
                 converted_pipeline_tariff_cost = "{}/{}".format(the_scenario.default_units_currency, the_scenario.default_units_liquid_phase)
-                route_cost_scaling = Q_(pipeline_tariff_cost).to(converted_pipeline_tariff_cost).magnitude
+                route_cost_scaling = Q_(pipeline_tariff_cost).to(converted_pipeline_tariff_cost).magnitude / average_density
 
         # Intermodal Edges - artificial == 2
         # ------------------------------------
@@ -1540,19 +1588,12 @@ def get_link_transport_cost(the_scenario, phase_of_matter, mode, artificial, log
     # (0 = network edge, 2 = intermodal, 1 = artificial link btw facility location and network edge)
     # add the appropriate cost to the network edges based on phase of matter
 
-    if phase_of_matter == "solid":
-        # set the mode costs
+    # set the mode costs in solids - liquids are converted to solids using densities later
+    if phase_of_matter == "solid" or phase_of_matter == "liquid":
         truck_base_cost = the_scenario.solid_truck_base_cost.magnitude
         railroad_class_1_cost = the_scenario.solid_railroad_class_1_cost.magnitude
         barge_cost = the_scenario.solid_barge_cost.magnitude
         artificial_cost = the_scenario.solid_artificial_cost.magnitude
-
-    elif phase_of_matter == "liquid":
-        # set the mode costs
-        truck_base_cost = the_scenario.liquid_truck_base_cost.magnitude
-        railroad_class_1_cost = the_scenario.liquid_railroad_class_1_cost.magnitude
-        barge_cost = the_scenario.liquid_barge_cost.magnitude
-        artificial_cost = the_scenario.liquid_artificial_cost.magnitude
 
     else:
         logger.error("the phase of matter: -- {} -- is not supported. returning")
@@ -1589,7 +1630,7 @@ def get_link_co2_cost(the_scenario, factors_dict, phase_of_matter, mode, artific
         if phase_of_matter == 'solid':
             co2_factor = co2_factor / the_scenario.truck_load_solid
         elif phase_of_matter == "liquid":
-            co2_factor = co2_factor / the_scenario.truck_load_liquid
+            co2_factor = co2_factor / (the_scenario.truck_load_liquid * the_scenario.densityFactor)
         else:
             logger.error("the phase of matter: -- {} -- is not supported. returning")
             raise NotImplementedError
@@ -1633,7 +1674,7 @@ def get_link_co2_cost(the_scenario, factors_dict, phase_of_matter, mode, artific
             if phase_of_matter == 'solid':
                 co2_factor = co2_factor / the_scenario.truck_load_solid
             elif phase_of_matter == "liquid":
-                co2_factor = co2_factor / the_scenario.truck_load_liquid
+                co2_factor = co2_factor / (the_scenario.truck_load_liquid * the_scenario.densityFactor)
             else:
                 logger.error("the phase of matter: -- {} -- is not supported. returning")
                 raise NotImplementedError
@@ -1693,7 +1734,7 @@ def set_network_costs(the_scenario, G, logger):
         db_con.execute(sql)
 
         sql = "create table if not exists networkx_edge_costs " \
-              "(edge_id INTEGER, phase_of_matter_id INT, route_cost REAL, transport_cost REAL, route_cost_transport REAL, co2_cost REAL, access_cost REAL)"
+              "(edge_id INTEGER, phase_of_matter_id INT, route_cost REAL, transport_cost REAL, route_cost_transport REAL, transload_cost REAL, co2_cost REAL, access_cost REAL)"
         db_con.execute(sql)
 
         # build up the network edges cost by phase of matter
@@ -1715,13 +1756,13 @@ def set_network_costs(the_scenario, G, logger):
             for phase_of_matter in phases_of_matter_in_scenario:
                 edge_costs = get_link_costs(the_scenario, factors_dict, phase_of_matter, G.edges[(u, v, c)], logger)
                 G.edges[(u, v, c)]['{}_weight'.format(phase_of_matter)] = edge_costs[0]
-                edge_cost_list.append([G.edges[(u,v,c)]['Edge_ID'], phase_of_matter, edge_costs[0], edge_costs[1], edge_costs[2], edge_costs[3], edge_costs[4]])
+                edge_cost_list.append([G.edges[(u,v,c)]['Edge_ID'], phase_of_matter, edge_costs[0], edge_costs[1], edge_costs[2], edge_costs[3], edge_costs[4], edge_costs[5]])
         
         # insert values into networkx_edge_costs
         if edge_cost_list:
             update_sql = """
                 INSERT into networkx_edge_costs
-                values (?,?,?,?,?,?,?)
+                values (?,?,?,?,?,?,?,?)
                 ;"""
 
             db_con.executemany(update_sql, edge_cost_list)
@@ -1739,6 +1780,8 @@ def set_network_costs(the_scenario, G, logger):
 def digraph_to_db(the_scenario, G, logger):
     # moves the networkX digraph into the database for the pulp handshake
 
+    speeds, times = get_speeds_times(the_scenario, logger)
+
     logger.info("start: digraph_to_db")
     with sqlite3.connect(the_scenario.main_db) as db_con:
 
@@ -1747,7 +1790,7 @@ def digraph_to_db(the_scenario, G, logger):
         db_con.execute(sql)
 
         sql = "create table if not exists networkx_nodes (node_id INT, source TEXT, source_OID integer, location_id_name " \
-              "TEXT, location_id TEXT, shape_x REAL, shape_y REAL)"
+              "TEXT, location_id TEXT, shape_x REAL, shape_y REAL, time REAL)"
         db_con.execute(sql)
 
         # loop through the nodes in the digraph and set them in the db
@@ -1762,6 +1805,7 @@ def digraph_to_db(the_scenario, G, logger):
             location_id = None
             shape_x = None
             shape_y = None
+            time = None
 
             if 'source' in G.nodes[node]:
                 source = G.nodes[node]['source']
@@ -1777,12 +1821,17 @@ def digraph_to_db(the_scenario, G, logger):
                 shape_x = G.nodes[node]['x_y_location'][0]
                 shape_y = G.nodes[node]['x_y_location'][1]
 
-            node_list.append([node, source, source_oid, location_id_name, location_id, shape_x, shape_y])
+            if 'time' in G.nodes[node]:
+                time = G.nodes[node]['time'] # not implemented
+            elif source in times:
+                time = times[source]
+
+            node_list.append([node, source, source_oid, location_id_name, location_id, shape_x, shape_y, time])
 
         if node_list:
             update_sql = """
                 INSERT into networkx_nodes
-                values (?,?,?,?,?,?,?)
+                values (?,?,?,?,?,?,?,?)
                 ;"""
 
             db_con.executemany(update_sql, node_list)
@@ -1800,7 +1849,7 @@ def digraph_to_db(the_scenario, G, logger):
 
         sql = "create table if not exists networkx_edges (edge_id INTEGER PRIMARY KEY, from_node_id INT, to_node_id " \
               "INT, artificial INT, mode_source TEXT, mode_source_oid INT, length REAL, route_cost_scaling REAL, " \
-              "capacity INT, volume REAL, VCR REAL, urban INT, limited_access INT)"
+              "capacity INT, volume REAL, VCR REAL, urban INT, limited_access INT, speed REAL)"
         db_con.execute(sql)
 
         # initialize edge_id to 0; first value will be set as 1
@@ -1815,6 +1864,7 @@ def digraph_to_db(the_scenario, G, logger):
             artificial = G.edges[(u, v, c)]['Artificial']
             mode_source = G.edges[(u, v, c)]['Mode_Type']
             mode_source_oid = G.edges[(u, v, c)]['source_OID']
+            speed = None
 
             if mode_source in ['rail', 'road', 'water']:
                 volume = G.edges[(u, v, c)]['Volume']
@@ -1838,15 +1888,32 @@ def digraph_to_db(the_scenario, G, logger):
                 logger.warning(
                     "EDGE: {}, {}, {} - mode: {} - artificial {} -- "
                     "does not have key route_cost_scaling".format(u, v, c, mode_source, artificial))
+                
+            if 'speed' in G.edges[(u, v, c)]: # not currently implemented
+                speed = G.edges[(u, v, c)]['speed']
+            elif mode_source in speeds:
+                # cast link_type as str
+                if 'Link_Type' in G.edges[(u, v, c)]:
+                    link_type = str(G.edges[(u, v, c)]['Link_Type']).lower()
+                else: 
+                    link_type = ''
+
+                if link_type in speeds[mode_source]:
+                    speed = speeds[mode_source][link_type]
+                else:
+                    speed = speeds[mode_source]['']
+            else:
+                logger.warning("EDGE: {}, {}, {} - mode: {} - artificial {} -- "
+                               "does not have a mode that matches speeds dictionary".format(u, v, c, mode_source, artificial))
 
             edge_list.append(
                 [edge_id, from_node_id, to_node_id, artificial, mode_source, mode_source_oid, length, route_cost_scaling,
-                 capacity, volume, vcr, urban, limited_access])
+                 capacity, volume, vcr, urban, limited_access, speed])
         # the node_id will be used to explode the edges by commodity and time period
         if edge_list:
             update_sql = """
                 INSERT into networkx_edges
-                values (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ;"""
             db_con.executemany(update_sql, edge_list)
             db_con.commit()
@@ -1914,14 +1981,37 @@ def read_gdb(main_gdb, logger, the_scenario, simplify=True, geom_attrs=True, str
                 fld_data = [f.GetField(f.GetFieldIndex(x)) for x in fields]
                 attributes = dict(list(zip(fields, fld_data)))
                 attributes["ShpName"] = lyr.GetName()
+
+                # All points and endpoints of lines are rounded to the nearest hundredth-meter when importing to NetworkX
+                round_pt = lambda pt : tuple(round(coord, 2) for coord in pt)
+                # For locks and concurrent waterway line endpoints, rounding is done to nearest decimeter
+                round_pt_locks = lambda pt : tuple(round(coord, 1) for coord in pt)
+
                 # Note: Using layer level geometry type
                 if g.GetGeometryType() == ogr.wkbPoint:
-                    net.add_node(g.GetPoint_2D(0), **attributes)
+                    geom = g.GetPoint_2D(0)
+                    if lyr.GetName() == 'locks':
+                        geom = round_pt_locks(geom)
+                    else:
+                        geom = round_pt(geom)
+                    net.add_node(geom, **attributes)
                 elif g.GetGeometryType() in (ogr.wkbLineString,
                                              ogr.wkbMultiLineString):
                     for edge in edges_from_line(g, attributes, simplify,
                                                 geom_attrs):
                         e1, e2, attr = edge
+                        if lyr.GetName() == 'water':
+                            if round_pt_locks(e1) in net.nodes:
+                                e1 = round_pt_locks(e1)
+                            else:
+                                e1 = round_pt(e1)
+                            if round_pt_locks(e2) in net.nodes:
+                                e2 = round_pt_locks(e2)
+                            else:
+                                e2 = round_pt(e2)
+                        else:
+                            e1 = round_pt(e1)
+                            e2 = round_pt(e2)
                         net.add_edge(e1, e2)
                         key = len(list(net[e1][e2].keys())) - 1
                         net[e1][e2][key].update(attr)
@@ -1931,6 +2021,18 @@ def read_gdb(main_gdb, logger, the_scenario, simplify=True, geom_attrs=True, str
                     for edge in edges_from_line(linear_geometry, attributes, simplify,
                                                 geom_attrs):
                         e1, e2, attr = edge
+                        if lyr.GetName() == 'water':
+                            if round_pt_locks(e1) in net.nodes:
+                                e1 = round_pt_locks(e1)
+                            else:
+                                e1 = round_pt(e1)
+                            if round_pt_locks(e2) in net.nodes:
+                                e2 = round_pt_locks(e2)
+                            else:
+                                e2 = round_pt(e2)
+                        else:
+                            e1 = round_pt(e1)
+                            e2 = round_pt(e2)
                         net.add_edge(e1, e2)
                         key = len(list(net[e1][e2].keys())) - 1
                         net[e1][e2][key].update(attr)
@@ -1946,6 +2048,7 @@ def read_gdb(main_gdb, logger, the_scenario, simplify=True, geom_attrs=True, str
 
 # ----------------------------------------------------------------------------
 
+
 def make_vehicle_type_dict(the_scenario, logger):
 
     # check for vehicle type file
@@ -1957,7 +2060,7 @@ def make_vehicle_type_dict(the_scenario, logger):
 
     # initialize vehicle property dict and read through vehicle_types CSV
     vehicle_dict = {}
-    with open(vehicle_types_path, 'r') as vt:
+    with open(vehicle_types_path, 'r', encoding='utf-8-sig') as vt:
         line_num = 1
         for line in vt:
             if line_num == 1:
@@ -1976,8 +2079,8 @@ def make_vehicle_type_dict(the_scenario, logger):
 
                 assert vehicle_property in ['Truck_Load_Solid', 'Railcar_Load_Solid', 'Barge_Load_Solid', 'Truck_Load_Liquid',
                                             'Railcar_Load_Liquid', 'Barge_Load_Liquid', 'Pipeline_Crude_Load_Liquid', 'Pipeline_Prod_Load_Liquid',
-                                            'Truck_Fuel_Efficiency', 'Road_CO2_Emissions', 'Barge_Fuel_Efficiency',
-                                            'Barge_CO2_Emissions', 'Rail_Fuel_Efficiency', 'Railroad_CO2_Emissions'], \
+                                            'Truck_Fuel_Efficiency', 'Truck_CO2_Emissions', 'Barge_Fuel_Efficiency',
+                                            'Barge_CO2_Emissions', 'Railcar_Fuel_Efficiency', 'Railcar_CO2_Emissions'], \
                                                 "Vehicle property: {} is not recognized. Refer to scenario.xml for supported property labels.".format(vehicle_property)
 
                 # convert units
@@ -1988,13 +2091,13 @@ def make_vehicle_type_dict(the_scenario, logger):
                 elif vehicle_property in ['Truck_Load_Liquid', 'Railcar_Load_Liquid', 'Barge_Load_Liquid', 'Pipeline_Crude_Load_Liquid', 'Pipeline_Prod_Load_Liquid']:
                     # convert csv value into default liquid units
                     property_value = Q_(property_value).to(the_scenario.default_units_liquid_phase)
-                elif vehicle_property in ['Truck_Fuel_Efficiency', 'Barge_Fuel_Efficiency', 'Rail_Fuel_Efficiency']:
-                     # convert csv value into distance units per gallon
-                    property_value = Q_(property_value).to('{}/gal'.format(the_scenario.default_units_distance))
-                elif vehicle_property in ['Road_CO2_Emissions']:
+                elif vehicle_property in ['Truck_Fuel_Efficiency', 'Barge_Fuel_Efficiency', 'Railcar_Fuel_Efficiency']:
+                     # convert csv value into default solid units times distance units per gallon
+                    property_value = Q_(property_value).to('{}*{}/gal'.format(the_scenario.default_units_solid_phase, the_scenario.default_units_distance))
+                elif vehicle_property in ['Truck_CO2_Emissions']:
                      # convert csv value into grams per distance unit
                     property_value = Q_(property_value).to('g/{}'.format(the_scenario.default_units_distance))
-                elif vehicle_property in ['Barge_CO2_Emissions', 'Railroad_CO2_Emissions']:
+                elif vehicle_property in ['Barge_CO2_Emissions', 'Railcar_CO2_Emissions']:
                      # convert csv value into grams per default mass unit per distance unit
                     property_value = Q_(property_value).to('g/{}/{}'.format(the_scenario.default_units_solid_phase, the_scenario.default_units_distance))
                 else:
@@ -2019,11 +2122,11 @@ def make_vehicle_type_dict(the_scenario, logger):
     # ensure all properties are included
     for mode in vehicle_dict:
         if mode == 'road':
-            properties = ['Truck_Load_Solid', 'Truck_Load_Liquid', 'Truck_Fuel_Efficiency', 'Road_CO2_Emissions']
+            properties = ['Truck_Load_Solid', 'Truck_Load_Liquid', 'Truck_Fuel_Efficiency', 'Truck_CO2_Emissions']
         elif mode == 'water':
             properties = ['Barge_Load_Solid', 'Barge_Load_Liquid', 'Barge_Fuel_Efficiency', 'Barge_CO2_Emissions']
         elif mode == 'rail':
-            properties = ['Railcar_Load_Solid', 'Railcar_Load_Liquid', 'Rail_Fuel_Efficiency', 'Railroad_CO2_Emissions']
+            properties = ['Railcar_Load_Solid', 'Railcar_Load_Liquid', 'Railcar_Fuel_Efficiency', 'Railcar_CO2_Emissions']
         for vehicle_label in vehicle_dict[mode]:
             for required_property in properties:
                 assert required_property in vehicle_dict[mode][vehicle_label].keys(), "Property: {} missing from Vehicle: {}".format(required_property, vehicle_label)
@@ -2032,6 +2135,7 @@ def make_vehicle_type_dict(the_scenario, logger):
 
 
 # ----------------------------------------------------------------------------
+
 
 def vehicle_type_setup(the_scenario, logger):
 
@@ -2064,6 +2168,7 @@ def vehicle_type_setup(the_scenario, logger):
                         ;
                         """.format(mode, vehicle_label, vehicle_property, property_value))
 
+
 # ----------------------------------------------------------------------------
 
 
@@ -2082,7 +2187,7 @@ def make_commodity_mode_dict(the_scenario, logger):
 
     # initialize dict and read through commodity_mode CSV
     commodity_mode_dict = {}
-    with open(the_scenario.commodity_mode_data, 'r') as rf:
+    with open(the_scenario.commodity_mode_data, 'r', encoding='utf-8-sig') as rf:
         line_num = 1
         header = None  # will assign within for loop
         for line in rf:

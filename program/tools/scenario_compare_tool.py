@@ -65,7 +65,7 @@ def scenario_compare_prep():
     routes_file_name = 'all_routes.csv'
     routes_file = os.path.join(output_dir, routes_file_name)
     rf = open(routes_file, 'w')
-    routes_header = 'scenario_name,route_id,from_facility,from_facility_type,to_facility,to_facility_type,commodity_name,phase,mode,transport_cost,routing_cost,access_cost,length,co2,in_solution\n'
+    routes_header = 'scenario_name,route_id,from_facility,from_facility_type,to_facility,to_facility_type,commodity_name,phase,mode,transport_cost,routing_cost,access_cost,length,co2,time,in_solution\n'
     rf.write(routes_header)
 
     # get user directory to search
@@ -171,6 +171,11 @@ def scenario_compare_prep():
 
         # remove the temp folder
         print("cleaning up temp folder")
+        if arcpy.Exists(input_gdb):
+            try:
+                arcpy.Delete_management(input_gdb)
+            except:
+                raise Exception("couldn't delete " + input_gdb)
         rmtree(temp_folder)
 
     # close merged csvs
