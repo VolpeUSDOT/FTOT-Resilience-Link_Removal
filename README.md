@@ -35,16 +35,17 @@ Run Quick Start 1 and Quick Start 2 to verify that the installation is complete.
 
 This tool requires a baseline scenario be run on a modified version of the main FTOT code base. The specific modifications are in ftot_routing.py which is updated in the following ways:
 
- - To not add back in all interstates to the road network before optimizing the routing solution. Without this edit, an FTOT analysis of the road network always includes the national interstate system.
- - To use only a 50-mile buffer around the selected area in the routing optimization. This makes the scenario analysis more specific to the local network of the FTOT analysis.
+- To not add back in all interstates to the road network before optimizing the routing solution. Without this edit, an FTOT analysis of the road network always includes the national interstate system.
+- To use only a 50-mile buffer around the selected area in the routing optimization. This makes the scenario analysis more specific to the local network of the FTOT analysis.
 
 To help ensure fully functional code when running the baseline scenario...
-1) Go into your installed FTOT directory (e.g., `C:\FTOT`) and rename the `\program` subfolder to `\program_original.`
-2) Then go to the downloaded Network Resilience Tool repository and copy the entire `\program` subfolder into `C:\FTOT`. The copied over code files already included the modified version of ftot_routing.py.
+
+1. Go into your installed FTOT directory (e.g., `C:\FTOT`) and rename the `\program` subfolder to `\program_original.`
+2. Then go to the downloaded Network Resilience Tool repository and copy the entire `\program` subfolder into `C:\FTOT`. The copied over code files already included the modified version of ftot_routing.py.
 
 ## Run Reference Scenario 7
 
-As an example baseline scenario, run Reference Scenario 7 using the modified FTOT code. Browse to `C:\FTOT\scenarios\reference_scenarios\rs7_capacity` and double-click `run_v7.bat`.
+As an example baseline scenario, run Reference Scenario 7 using the modified FTOT code. Browse to `C:\FTOT\scenarios\reference_scenarios\rs7_capacity` and double-click `run_v8.bat`.
 
 ## Set up the Network Resilience Tool Python environment
 
@@ -66,7 +67,6 @@ conda info --envs
 
 You only need to create the environment once.
 
-
 ## Run the Network Resilience Tool
 
 You can then launch Jupyter by the following steps:
@@ -75,18 +75,20 @@ You can then launch Jupyter by the following steps:
 conda activate FTOTnetworkEnv
 jupyter notebook
 ```
+
 If the Jupyter notebook instance launches with a warning about the kernel, you may need to manually select `FTOTnetworkEnv` as the kernel to use. If the `FTOTnetworkEnv` kernel fails to load, follow [these steps](https://stackoverflow.com/questions/54876404/unable-to-import-sqlite3-using-anaconda-python) to ensure all supporting files are present.
 
 From the Jupyter notebook window, browse to `Conduct_Link_Removal.ipynb` to begin this module. Follow the instructions in the notebook.
 
 #### Troubleshooting HTML Report Creation
+
 The final cells in the Conduct_Link_Removal.ipynb notebook generate the HTML report. If these cells error out and you do not see an HTML report pop up in your browser or appear in the disruption folder (located at the same place as your baseline scenario folder), please try the following steps:
 
-1) Open a new Anaconda Prompt window and activate the environment by running `conda activate FTOTnetworkEnv`
-2) Navigate to the link_removal subfolder: `cd C:\github\FTOT-Resilience-Link_Removal\link_removal`
-3) Run the following: `Rscript compile_report.R <BASELINE SCENARIO FOLDER> <DISRUPT TYPE>`. For example, for Reference Scenario 7 and disruption type 'V' for volume, run `Rscript compile_report.R C:\FTOT\scenarios\reference_scenarios\rs7_capacity V`
-4) If successful, the prompt window should print out "Output created: Disruption_Results.html".
-5) Return to the Conduct_Link_Removal.ipynb, scroll back down to Step 5 and re-run each cell underneath "Step 5" one-by-one by clicking into each cell, then from the top menu bar running Cell > Run Cells. You can alternatively click into each cell and press Ctrl + Enter.
-6) The report should appear in your browser window and should be saved in the disruption folder.
+1. Open a new Anaconda Prompt window and activate the environment by running `conda activate FTOTnetworkEnv`
+2. Navigate to the link_removal subfolder: `cd C:\github\FTOT-Resilience-Link_Removal\link_removal`
+3. Run the following: `Rscript compile_report.R <BASELINE SCENARIO FOLDER> <DISRUPT TYPE>`. For example, for Reference Scenario 7 and disruption type 'V' for volume, run `Rscript compile_report.R C:\FTOT\scenarios\reference_scenarios\rs7_capacity V`
+4. If successful, the prompt window should print out "Output created: Disruption_Results.html".
+5. Return to the Conduct_Link_Removal.ipynb, scroll back down to Step 5 and re-run each cell underneath "Step 5" one-by-one by clicking into each cell, then from the top menu bar running Cell > Run Cells. You can alternatively click into each cell and press Ctrl + Enter.
+6. The report should appear in your browser window and should be saved in the disruption folder.
 
 If needed, reach out to the FTOT team at FTOT-Team@dot.gov for assistance.
